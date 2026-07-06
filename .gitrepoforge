@@ -8,3 +8,5 @@ config:
   justfile: true
   release_github: false
   status: wip
+  docs:
+    enabled: true

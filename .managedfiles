@@ -34,6 +34,12 @@ managed_files:
       sections:
         - start: start_of_file
           end: line(5)
+    - path: docs/.clip4llm
+      management: file
+    - path: docs/.gitignore
+      management: file
+    - path: docs/_config.yml
+      management: file
     - path: go.mod
       management: sections
       sections:
