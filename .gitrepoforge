@@ -1,0 +1,10 @@
+name: oci-supplychain-observatory
+default_branch: main
+config:
+  description: "Inspect public OCI image supply chain metadata, including signatures, attestations, and SBOMs."
+  license: MIT
+  language: go
+  release: docker-go
+  justfile: true
+  release_github: false
+  status: wip
