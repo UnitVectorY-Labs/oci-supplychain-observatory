@@ -8,6 +8,7 @@ Important controls:
 - Outbound registry access is restricted to the configured registry allow-list.
 - Tags are resolved to immutable digests before artifact discovery is reported.
 - Registry responses and artifact blobs are read through explicit byte limits.
+- Artifact blob reads are limited to recognized metadata layer media types. Ordinary OCI/Docker image layer media types are skipped, including when a digest-derived legacy Cosign tag resolves to a normal image index.
 - Requests use strict server and outbound registry timeouts.
 - POST requests are protected with `Origin` and `Sec-Fetch-Site` checks.
 - Inspection job identifiers are random process-local IDs. They are used only to retrieve the rendered result for an inspection already started by `POST /inspect`.

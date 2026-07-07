@@ -15,4 +15,8 @@ The primary user flow is intentionally asynchronous. `POST /inspect` validates t
 
 Artifact payload rendering keeps the payload structure as the primary view. Each fetched artifact exposes a raw JSON view and a decoded structure view. The decoded view recursively expands base64-encoded JSON, JSON string fields, and supported certificate fields at the row where the encoded value appeared. Those decoded substructures render as their own decoded/raw tab groups so users can inspect nested claim structure without losing the original location or raw encoded value.
 
+Artifact discovery treats individual metadata layers as separate artifacts. This matters for legacy Cosign tags because a single `.att` or `.sig` manifest may contain multiple DSSE or simple-signing layers. The inspector reads known metadata layer media types, including Cosign simple-signing, DSSE envelopes, SPDX, CycloneDX, in-toto, and JSON payloads. It intentionally skips ordinary image layer media types so digest-derived tags that point at normal image indexes are not treated as supply-chain metadata and do not cause container layers to be downloaded.
+
+Legacy Cosign lookup checks `.sig`, `.att`, and `.sbom` tags derived from the resolved target digest. The unsuffixed digest-derived tag is inspected only as a possible attachment index, and platform descriptors in that index are ignored because they represent image manifests rather than metadata attachments.
+
 The app remains an inspection tool. It does not generate SBOMs, pull full image layers, execute registry content, or treat decoded metadata as policy trust.

@@ -72,6 +72,20 @@ func ClassifyArtifact(artifactType, mediaType string, annotations map[string]str
 	}
 }
 
+func IsMetadataLayer(mediaType string) bool {
+	mt := strings.ToLower(strings.TrimSpace(mediaType))
+	return mt == MediaCosignSimpleSigning ||
+		mt == MediaDSSEEnvelope ||
+		strings.Contains(mt, "spdx") ||
+		strings.Contains(mt, "cyclonedx") ||
+		strings.Contains(mt, "in-toto") ||
+		strings.Contains(mt, "intoto") ||
+		strings.Contains(mt, "attestation") ||
+		strings.HasSuffix(mt, "+json") ||
+		mt == "application/json" ||
+		mt == "text/json"
+}
+
 func SummarizeArtifactPayload(raw []byte, mediaType string) ([]KV, []KV, bool) {
 	out := []KV{{"Payload media type", ValueOr(mediaType, "not provided")}}
 	summary, signatures, isSBOM := SummarizeJSON(raw)

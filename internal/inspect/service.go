@@ -138,13 +138,15 @@ func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, tar
 	target.Warnings = append(target.Warnings, warnings...)
 	target.ReferrerCount = len(referrers)
 	for _, desc := range referrers {
-		s.addArtifact(&target, s.artifactFromDescriptor(ctx, ref, target.Digest, "OCI referrer", desc))
+		for _, artifact := range s.artifactsFromDescriptor(ctx, ref, target.Digest, "OCI referrer", desc) {
+			s.addArtifact(&target, artifact)
+		}
 	}
 	s.inspectCosignAttachmentIndex(ctx, ref, &target)
 	for _, legacy := range []struct {
 		suffix string
 		typ    string
-	}{{".sig", "Signature"}, {".att", "Attestation"}} {
+	}{{".sig", "Signature"}, {".att", "Attestation"}, {".sbom", "SBOM"}} {
 		tag := oci.LegacyCosignTag(target.Digest, legacy.suffix)
 		resp, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, tag)
 		if err != nil {
@@ -163,9 +165,10 @@ func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, tar
 			Size:               resp.Size,
 			Summary:            []oci.KV{{Key: "Legacy tag", Value: tag}, {Key: "Manifest layers", Value: strconv.Itoa(len(manifest.Layers))}},
 		}
-		s.fetchLayers(ctx, ref, &artifact, manifest)
-		s.registerArtifact(&artifact)
-		s.addArtifact(&target, artifact)
+		for _, layerArtifact := range s.artifactsFromManifestLayers(ctx, ref, artifact, manifest) {
+			s.registerArtifact(&layerArtifact)
+			s.addArtifact(&target, layerArtifact)
+		}
 	}
 	return target
 }
@@ -182,20 +185,29 @@ func (s *Service) inspectCosignAttachmentIndex(ctx context.Context, ref referenc
 	if len(manifest.Manifests) == 0 {
 		return
 	}
-	target.Warnings = append(target.Warnings, fmt.Sprintf("Discovered Cosign attachment index %s (%s).", tag, oci.ValueOr(resp.Digest, "digest unavailable")))
 	seen := map[string]bool{}
 	for _, existing := range append(append(target.Signatures, target.Attestations...), target.SBOMs...) {
 		seen[existing.Digest] = true
 	}
+	discovered := 0
 	for _, desc := range manifest.Manifests {
+		if desc.Platform != nil {
+			continue
+		}
 		if seen[desc.Digest] {
 			continue
 		}
-		s.addArtifact(target, s.artifactFromDescriptor(ctx, ref, target.Digest, "Cosign attachment index tag "+tag, desc))
+		for _, artifact := range s.artifactsFromDescriptor(ctx, ref, target.Digest, "Cosign attachment index tag "+tag, desc) {
+			s.addArtifact(target, artifact)
+			discovered++
+		}
+	}
+	if discovered > 0 {
+		target.Warnings = append(target.Warnings, fmt.Sprintf("Discovered Cosign attachment index %s (%s).", tag, oci.ValueOr(resp.Digest, "digest unavailable")))
 	}
 }
 
-func (s *Service) artifactFromDescriptor(ctx context.Context, ref reference.ImageRef, targetDigest, discovery string, desc oci.Descriptor) Artifact {
+func (s *Service) artifactsFromDescriptor(ctx context.Context, ref reference.ImageRef, targetDigest, discovery string, desc oci.Descriptor) []Artifact {
 	artifact := Artifact{
 		Type:               oci.ClassifyArtifact(desc.ArtifactType, desc.MediaType, desc.Annotations),
 		Discovery:          discovery,
@@ -215,11 +227,16 @@ func (s *Service) artifactFromDescriptor(ctx context.Context, ref reference.Imag
 	resp, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, desc.Digest)
 	if err != nil {
 		artifact.Error = "Could not fetch artifact manifest: " + err.Error()
-		return artifact
+		s.registerArtifact(&artifact)
+		return []Artifact{artifact}
 	}
 	artifact.MediaType = oci.ValueOr(resp.MediaType, artifact.MediaType)
 	if len(manifest.Layers) > 0 {
-		s.fetchLayers(ctx, ref, &artifact, manifest)
+		artifacts := s.artifactsFromManifestLayers(ctx, ref, artifact, manifest)
+		for i := range artifacts {
+			s.registerArtifact(&artifacts[i])
+		}
+		return artifacts
 	} else if len(resp.Bytes) > 0 {
 		artifact.Raw = resp.Bytes
 		artifact.Downloadable = true
@@ -232,32 +249,62 @@ func (s *Service) artifactFromDescriptor(ctx context.Context, ref reference.Imag
 		}
 	}
 	s.registerArtifact(&artifact)
-	return artifact
+	return []Artifact{artifact}
 }
 
-func (s *Service) fetchLayers(ctx context.Context, ref reference.ImageRef, artifact *Artifact, manifest oci.Manifest) {
-	for _, layer := range manifest.Layers {
+func (s *Service) artifactsFromManifestLayers(ctx context.Context, ref reference.ImageRef, base Artifact, manifest oci.Manifest) []Artifact {
+	var artifacts []Artifact
+	for i, layer := range manifest.Layers {
+		if !oci.IsMetadataLayer(layer.MediaType) {
+			continue
+		}
+		artifact := base
+		artifact.ID = ""
+		artifact.Digest = layer.Digest
+		artifact.MediaType = layer.MediaType
+		artifact.ArtifactType = oci.ValueOr(manifest.ArtifactType, artifact.ArtifactType)
+		artifact.Size = layer.Size
+		artifact.Raw = nil
+		artifact.Downloadable = false
+		artifact.RawView = ""
+		artifact.DecodedView = ""
+		artifact.DecodedRows = nil
+		artifact.Error = ""
+		if len(manifest.Layers) > 1 {
+			artifact.Summary = append(append([]oci.KV{}, artifact.Summary...), oci.KV{Key: "Metadata layer", Value: fmt.Sprintf("%d of %d", i+1, len(manifest.Layers))})
+		} else {
+			artifact.Summary = append([]oci.KV{}, artifact.Summary...)
+		}
+		if artifact.Type == "Signature" || artifact.Type == "" {
+			artifact.Type = oci.ClassifyArtifact(manifest.ArtifactType, layer.MediaType, layer.Annotations)
+		}
+		if artifact.Type == "Attestation" && strings.Contains(strings.ToLower(layer.MediaType), "spdx") {
+			artifact.Type = "SBOM attestation"
+		}
 		if layer.Size > s.cfg.MaxArtifactBytes {
 			artifact.Error = fmt.Sprintf("Layer %s is larger than the configured artifact limit.", layer.Digest)
+			artifacts = append(artifacts, artifact)
 			continue
 		}
 		raw, err := s.registry.GetBlob(ctx, ref.Registry, ref.Repository, layer.Digest, s.cfg.MaxArtifactBytes)
 		if err != nil {
 			artifact.Error = "Could not fetch artifact layer: " + err.Error()
+			artifacts = append(artifacts, artifact)
 			continue
 		}
 		artifact.Raw = raw
 		artifact.Downloadable = true
-		s.setPayloadViews(artifact, raw)
-		addDescriptorAnnotationDetails(artifact, layer.Annotations)
+		s.setPayloadViews(&artifact, raw)
+		addDescriptorAnnotationDetails(&artifact, layer.Annotations)
 		summary, signatures, isSBOM := oci.SummarizeArtifactPayload(raw, layer.MediaType)
 		artifact.Summary = append(artifact.Summary, summary...)
 		artifact.Signatures = append(artifact.Signatures, signatures...)
 		if artifact.Type == "Attestation" && isSBOM {
 			artifact.Type = "SBOM attestation"
 		}
-		return
+		artifacts = append(artifacts, artifact)
 	}
+	return artifacts
 }
 
 func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {

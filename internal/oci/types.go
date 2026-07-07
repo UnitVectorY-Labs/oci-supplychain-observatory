@@ -7,6 +7,8 @@ const (
 	MediaOCIManifest         = "application/vnd.oci.image.manifest.v1+json"
 	MediaOCIIndex            = "application/vnd.oci.image.index.v1+json"
 	MediaOCIArtifactManifest = "application/vnd.oci.artifact.manifest.v1+json"
+	MediaCosignSimpleSigning = "application/vnd.dev.cosign.simplesigning.v1+json"
+	MediaDSSEEnvelope        = "application/vnd.dsse.envelope.v1+json"
 )
 
 type Descriptor struct {

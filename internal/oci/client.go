@@ -42,7 +42,7 @@ func (c *Client) GetManifest(ctx context.Context, registry, repository, referenc
 		MediaOCIManifest,
 		MediaDockerManifest,
 		MediaOCIArtifactManifest,
-		"application/vnd.dev.cosign.simplesigning.v1+json",
+		MediaCosignSimpleSigning,
 	}, ", ")
 	resp, err := c.registryRequest(ctx, http.MethodGet, registry, "/v2/"+repository+"/manifests/"+reference, accept, 20<<20)
 	if err != nil {
