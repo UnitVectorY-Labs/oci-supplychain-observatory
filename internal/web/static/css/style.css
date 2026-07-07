@@ -148,6 +148,7 @@ summary:focus {
 }
 
 .result-main {
+  flex: 1;
   width: min(1180px, 100%);
   margin: 0 auto;
   padding: 22px 18px 58px;
@@ -576,10 +577,26 @@ pre {
 }
 
 .footer {
+  margin-top: 32px;
   padding: 16px;
+  border-top: 1px solid rgba(148, 163, 184, .18);
   color: #78716c;
   text-align: center;
-  font-size: .8rem;
+  font-size: .75rem;
+}
+
+.footer p {
+  margin: 0;
+}
+
+.link-accent {
+  color: #fb923c;
+  text-decoration: none;
+}
+
+.link-accent:hover {
+  color: #fdba74;
+  text-decoration: underline;
 }
 
 @media (max-width: 820px) {
