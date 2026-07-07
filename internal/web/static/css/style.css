@@ -116,6 +116,16 @@ summary:focus {
   line-height: 1.45;
 }
 
+.registry-list {
+  margin: 8px 0 0;
+  padding: 0 0 0 20px;
+  list-style: disc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .85rem;
+  color: #a8a29e;
+  line-height: 1.6;
+}
+
 .app-header {
   border-bottom: 1px solid rgba(148, 163, 184, .22);
   background: rgba(17, 19, 21, .95);

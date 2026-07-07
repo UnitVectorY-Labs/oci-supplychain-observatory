@@ -1,0 +1,8 @@
+# Allowed OCI registries for inspection.
+# Only images from these registries can be inspected.
+registries:
+  - ghcr.io
+  - registry.k8s.io
+  - gcr.io
+  - quay.io
+  - docker.io

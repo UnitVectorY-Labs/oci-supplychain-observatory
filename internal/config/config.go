@@ -2,12 +2,18 @@
 package config
 
 import (
+	_ "embed"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+//go:embed registries.yaml
+var registriesYAML []byte
 
 const (
 	DefaultMaxArtifactBytes = 10 << 20
@@ -30,9 +36,32 @@ type Config struct {
 	MaxReferrers     int
 }
 
-func Load() Config {
-	allowed := env("OSO_ALLOWED_REGISTRIES", env("CTI_ALLOWED_REGISTRIES", "ghcr.io,registry.k8s.io,gcr.io,quay.io,docker.io"))
-	list := splitCSV(allowed)
+type registryConfig struct {
+	Registries []string `yaml:"registries"`
+}
+
+func LoadRegistries() ([]string, error) {
+	var cfg registryConfig
+	if err := yaml.Unmarshal(registriesYAML, &cfg); err != nil {
+		return nil, err
+	}
+	return normalizeHosts(cfg.Registries), nil
+}
+
+func Load() (Config, error) {
+	var list []string
+	var err error
+
+	if os.Getenv("OSO_ALLOWED_REGISTRIES") != "" || os.Getenv("CTI_ALLOWED_REGISTRIES") != "" {
+		allowed := env("OSO_ALLOWED_REGISTRIES", env("CTI_ALLOWED_REGISTRIES", ""))
+		list = splitCSV(allowed)
+	} else {
+		list, err = LoadRegistries()
+		if err != nil {
+			return Config{}, err
+		}
+	}
+
 	allowedMap := make(map[string]bool, len(list))
 	for _, host := range list {
 		allowedMap[strings.ToLower(host)] = true
@@ -49,7 +78,7 @@ func Load() Config {
 		MaxPreviewBytes:  int64Env("OSO_MAX_PREVIEW_BYTES", DefaultMaxPreviewBytes),
 		MaxPlatforms:     intEnv("OSO_MAX_PLATFORMS", DefaultMaxPlatforms),
 		MaxReferrers:     intEnv("OSO_MAX_REFERRERS", DefaultMaxReferrers),
-	}
+	}, nil
 }
 
 func env(k, fallback string) string {
@@ -59,15 +88,19 @@ func env(k, fallback string) string {
 	return fallback
 }
 
-func splitCSV(s string) []string {
+func normalizeHosts(hosts []string) []string {
 	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, strings.ToLower(p))
+	for _, h := range hosts {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, strings.ToLower(h))
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+func splitCSV(s string) []string {
+	return normalizeHosts(strings.Split(s, ","))
 }
 
 func durationEnv(k string, fallback time.Duration) time.Duration {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -27,15 +26,21 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
 	registry := oci.NewClient(cfg.RequestTimeout)
 	reportCache := cache.NewMemory[*inspect.Report]()
 	inspector := inspect.NewService(cfg, registry, reportCache, logger)
 	server, err := web.New(cfg, inspector, logger)
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("failed to create server", "error", err)
+		os.Exit(1)
 	}
 	if err := server.Start(); err != nil {
-		log.Fatal(err)
+		logger.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }

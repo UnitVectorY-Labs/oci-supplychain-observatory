@@ -117,12 +117,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		s.renderResultError(w, "Invalid request", "Could not parse the form data.", http.StatusBadRequest)
+		s.renderResultError(w, r, "Invalid request", "Could not parse the form data.", http.StatusBadRequest)
 		return
 	}
 	input := strings.TrimSpace(r.FormValue("image"))
 	if _, err := reference.Parse(input, reference.Config{AllowedRegistry: s.cfg.AllowedRegistry}); err != nil {
-		s.renderResultError(w, "Inspection failed", err.Error(), http.StatusBadRequest)
+		s.renderResultError(w, r, "Inspection failed", err.Error(), http.StatusBadRequest)
 		return
 	}
 	job := s.jobs.create(input)
@@ -165,8 +165,11 @@ func (s *Server) handleInspectJob(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, "result-panel.html", ResultData{Report: job.Report})
 }
 
-func (s *Server) renderResultError(w http.ResponseWriter, title, message string, status int) {
+func (s *Server) renderResultError(w http.ResponseWriter, r *http.Request, title, message string, status int) {
 	data := ResultData{Error: &ErrorData{Title: title, Message: message}}
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		status = http.StatusOK
+	}
 	s.render(w, status, "results.html", data)
 }
 

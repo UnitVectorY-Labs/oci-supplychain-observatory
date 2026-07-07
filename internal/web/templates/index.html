@@ -24,7 +24,12 @@
             <span>Inspect</span>
           </button>
         </form>
-        <p class="meta-note">Public anonymous registry access only. Allowed registries: {{join .Allowed ", "}}.</p>
+        <p class="meta-note">Public anonymous registry access only. Allowed registries:</p>
+        <ul class="registry-list">
+          {{range .Allowed}}
+          <li>{{.}}</li>
+          {{end}}
+        </ul>
       </section>
     </main>
     <footer class="footer">
