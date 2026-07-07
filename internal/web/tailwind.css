@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+@source "./internal/web/templates/**/*.html";
+@source "./internal/web/**/*.go";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
+}

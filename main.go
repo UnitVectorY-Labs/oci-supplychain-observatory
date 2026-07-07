@@ -1,7 +1,16 @@
 package main
 
 import (
+	"log"
+	"log/slog"
+	"os"
 	"runtime/debug"
+
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/cache"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/config"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/inspect"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/web"
 )
 
 // Version is the application version, injected at build time via ldflags
@@ -17,5 +26,16 @@ func main() {
 		}
 	}
 
-	// TODO: Implement logic in internal package
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	cfg := config.Load()
+	registry := oci.NewClient(cfg.RequestTimeout)
+	reportCache := cache.NewMemory[*inspect.Report]()
+	inspector := inspect.NewService(cfg, registry, reportCache, logger)
+	server, err := web.New(cfg, inspector, logger)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := server.Start(); err != nil {
+		log.Fatal(err)
+	}
 }

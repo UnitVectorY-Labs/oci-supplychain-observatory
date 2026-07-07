@@ -12,7 +12,8 @@ The application accepts only a container image reference as input. It discovers 
 - Application behavior must be implemented under `internal/`.
 - Keep packages small and purpose-driven.
 - Prefer clear boundaries between HTTP handling, registry access, verification, parsing, rendering, and configuration.
-- Avoid placing business logic in templates, handlers, or `main.go`.
+- Avoid placing business logic in templates, handlers, or `main.go` it is just an entry point.
+- The HTML templates are all stored under `internal/web/templates/` and should be rendered with HTMX and included as part of the Go binary using the `embed` package.
 - Treat registry responses, artifact payloads, and user-provided image references as untrusted input.
 
 ## Tech Stack

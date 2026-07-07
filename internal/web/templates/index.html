@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCI Supply Chain Observatory</title>
+  <meta name="description" content="Inspect public OCI image signatures, attestations, provenance, and SBOM metadata.">
+  <link rel="stylesheet" href="{{assetURL "/static/css/style.css"}}">
+  <script src="{{assetURL "/static/js/script.js"}}"></script>
+</head>
+<body>
+  <div class="page-shell">
+    <main class="search-main" id="app">
+      <section class="search-panel" aria-labelledby="search-title">
+        <h1 id="search-title" class="brand-mark">
+          {{template "icon-shield-search"}}
+          OCI Supply Chain Observatory
+        </h1>
+        <p class="search-copy">Enter a public container image reference to inspect registry-published signatures, attestations, provenance, and SBOM metadata without pulling image layers.</p>
+        <form method="post" action="/inspect" class="inspect-form" hx-post="/inspect" hx-target="body" hx-swap="innerHTML" hx-indicator="#loading">
+          <input class="image-input" type="text" name="image" placeholder="ghcr.io/unitvectory-labs/iapheaders:v0.5.1" maxlength="512" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+          <button type="submit" class="btn-primary">
+            {{template "icon-search"}}
+            <span>Inspect</span>
+          </button>
+        </form>
+        <p class="meta-note">Public anonymous registry access only. Allowed registries: {{join .Allowed ", "}}.</p>
+      </section>
+    </main>
+    <footer class="footer">UnitVectorY Labs | MIT License</footer>
+  </div>
+  <div id="loading" class="htmx-indicator loading-card" aria-live="polite" aria-label="Inspecting image metadata">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <p>Inspecting registry metadata...</p>
+    </div>
+  </div>
+  <script src="{{assetURL "/static/js/htmx.min.js"}}"></script>
+</body>
+</html>

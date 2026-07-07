@@ -6,6 +6,10 @@ default:
 build:
   go build ./...
 
+# Build Tailwind CSS if the Tailwind CLI is available
+css:
+  npx @tailwindcss/cli -i ./internal/web/tailwind.css -o ./internal/web/static/css/style.css --minify
+
 # Run tests for oci-supplychain-observatory with Go
 test:
   go clean -testcache

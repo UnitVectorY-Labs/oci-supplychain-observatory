@@ -1,0 +1,181 @@
+{{if .Loading}}
+<section id="inspection-panel" class="section-card loading-section" hx-get="/inspect/jobs/{{.Loading.JobID}}" hx-trigger="load delay:150ms, every 1s" hx-swap="outerHTML">
+  <div class="loading-content">
+    <div class="loading-spinner"></div>
+    <div>
+      <h2>Loading registry metadata</h2>
+      <p>Resolving the image reference and discovering published supply-chain artifacts.</p>
+    </div>
+  </div>
+</section>
+{{else if .Error}}
+<section id="inspection-panel" class="error-card">
+  <h2>{{.Error.Title}}</h2>
+  <p>{{.Error.Message}}</p>
+</section>
+{{else}}
+{{with .Report}}
+<section id="inspection-panel">
+  <section class="metadata-card" aria-label="Inspection metadata">
+    <dl class="metadata-list">
+      <dt>Image</dt><dd>{{.DisplayReference}}</dd>
+      <dt>Digest</dt><dd>{{.ResolvedDigest}}</dd>
+      <dt>Repository</dt><dd>{{.Registry}}/{{.Repository}}</dd>
+    </dl>
+  </section>
+
+  {{if .Warnings}}
+  <div class="status-row">{{range .Warnings}}<span class="chip warn">{{.}}</span>{{end}}</div>
+  {{end}}
+
+  <div class="target-tabs" data-target-tabs>
+    <div class="tab-list" role="tablist" aria-label="Inspected manifests">
+      <button type="button" class="tab-button is-active" data-target-tab="target-top" role="tab" aria-selected="true">Top-level</button>
+      {{range $idx, $platform := .Platforms}}
+      <button type="button" class="tab-button" data-target-tab="target-platform-{{$idx}}" role="tab" aria-selected="false">{{$platform.Name}}</button>
+      {{end}}
+    </div>
+    <div id="target-top" class="target-panel is-active" data-target-panel>
+      {{template "target" .TopLevel}}
+    </div>
+    {{range $idx, $platform := .Platforms}}
+    <div id="target-platform-{{$idx}}" class="target-panel" data-target-panel hidden>
+      {{template "target" $platform}}
+    </div>
+    {{end}}
+  </div>
+</section>
+{{end}}
+{{end}}
+
+{{define "target"}}
+<section class="section-card">
+  <div class="section-head">
+    <div>
+      <h2>{{.Name}}</h2>
+      <p class="mono">{{.Digest}}</p>
+    </div>
+    <span class="chip">{{.Kind}}</span>
+  </div>
+  <div class="section-body">
+    <dl class="detail-list">
+      {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
+      {{if .OS}}<dt>Platform</dt><dd>{{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}</dd>{{end}}
+      <dt>OCI referrers</dt><dd>{{.ReferrerCount}}</dd>
+    </dl>
+    {{range .Warnings}}<p class="chip warn">{{.}}</p>{{end}}
+    {{if .ArtifactCount}}
+      {{if .Signatures}}
+      <h3 class="artifact-section-title">Signatures</h3>
+      <div class="artifact-stack">{{range .Signatures}}{{template "artifact" .}}{{end}}</div>
+      {{end}}
+      {{if .Attestations}}
+      <h3 class="artifact-section-title">Attestations and Provenance</h3>
+      <div class="artifact-stack">{{range .Attestations}}{{template "artifact" .}}{{end}}</div>
+      {{end}}
+      {{if .SBOMs}}
+      <h3 class="artifact-section-title">SBOMs</h3>
+      <div class="artifact-stack">{{range .SBOMs}}{{template "artifact" .}}{{end}}</div>
+      {{end}}
+    {{else}}
+      <div class="empty-state">No supply-chain artifacts were discovered for this digest.</div>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
+{{define "artifact"}}
+<article class="artifact-card">
+  <div class="artifact-top">
+    <div>
+      <strong>{{.Type}}</strong>
+      <p class="mono muted">{{.Digest}}</p>
+    </div>
+  </div>
+  <dl class="detail-list">
+    <dt>Discovery</dt><dd>{{.Discovery}}</dd>
+    {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
+    {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
+    {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
+  </dl>
+  {{if .Error}}<p class="chip bad">{{.Error}}</p>{{end}}
+  {{if .Downloadable}}<p><a class="btn-secondary btn-download" href="/artifacts/{{.ID}}/download">{{template "icon-download"}} Download raw artifact</a></p>{{end}}
+  {{if .RawView}}
+  <div class="payload-tabs" data-artifact-tabs>
+    <div class="tab-list compact-tabs" role="tablist" aria-label="Artifact payload views">
+      <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded structure</button>
+      <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw JSON</button>
+    </div>
+    <div class="artifact-panel is-active" data-artifact-panel="decoded">
+      {{if .DecodedRows}}
+        {{if .DecodedRowsTruncated}}<p class="payload-note">Decoded structure view is truncated.</p>{{end}}
+        <div class="payload-table-wrap">
+          <table class="payload-table">
+            {{template "payloadColgroup"}}
+            <thead>
+              <tr><th>Attribute</th><th>Type</th><th>Value</th></tr>
+            </thead>
+            <tbody>
+              {{template "payloadRows" .DecodedRows}}
+            </tbody>
+          </table>
+        </div>
+      {{else}}
+        <div class="empty-state">This payload is not JSON and does not contain base64-encoded JSON.</div>
+      {{end}}
+    </div>
+    <div class="artifact-panel" data-artifact-panel="raw" hidden>
+      {{if .RawViewTruncated}}<p class="payload-note">Raw payload view is truncated.</p>{{end}}
+      <pre class="payload-pre">{{.RawView}}</pre>
+    </div>
+  </div>
+  {{end}}
+</article>
+{{end}}
+
+{{define "payloadRows"}}
+{{range .}}
+<tr class="{{if .DecodedRows}}payload-row-has-expansion{{end}}">
+  <td class="payload-key {{.DepthClass}}">{{.Key}}</td>
+  <td class="payload-type">{{.Type}}</td>
+  <td class="payload-value">{{if not .DecodedRows}}{{.Value}}{{end}}</td>
+</tr>
+{{if .DecodedRows}}
+<tr class="payload-expansion-row">
+  <td colspan="3">
+    {{template "nestedPayloadTabs" .}}
+  </td>
+</tr>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "nestedPayloadTabs"}}
+<div class="payload-tabs nested-payload-tabs" data-artifact-tabs>
+  <div class="tab-list compact-tabs nested-tabs" role="tablist" aria-label="Decoded value views">
+    <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded</button>
+    <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw</button>
+  </div>
+  <div class="artifact-panel is-active" data-artifact-panel="decoded">
+    <div class="payload-table-wrap nested-payload-table-wrap">
+      <table class="payload-table nested-payload-table">
+        {{template "payloadColgroup"}}
+        <tbody>
+          {{template "payloadRows" .DecodedRows}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="artifact-panel" data-artifact-panel="raw" hidden>
+    <pre class="payload-pre nested-payload-pre">{{.Raw}}</pre>
+  </div>
+</div>
+{{end}}
+
+{{define "payloadColgroup"}}
+<colgroup>
+  <col class="payload-col-key">
+  <col class="payload-col-type">
+  <col class="payload-col-value">
+</colgroup>
+{{end}}

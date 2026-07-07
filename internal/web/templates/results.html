@@ -1,0 +1,41 @@
+<div class="page-shell">
+  <header class="app-header">
+    <div class="app-header-inner">
+      <a class="btn-secondary btn-back" href="/">{{template "icon-arrow-left"}} Back</a>
+      <div class="app-brand">{{template "icon-shield-search"}} OCI Supply Chain Observatory</div>
+    </div>
+  </header>
+  {{if .Loading}}
+  <main class="result-main">
+    <section class="result-hero">
+      <p class="eyebrow">Inspecting image</p>
+      <h1>{{.Loading.Input}}</h1>
+    </section>
+    {{template "result-panel.html" .}}
+  </main>
+  {{else if .Error}}
+  <main class="result-main">
+    <section class="result-hero">
+      <p class="eyebrow">Inspection</p>
+      <h1>Unable to inspect image</h1>
+    </section>
+    {{template "result-panel.html" .}}
+  </main>
+  {{else}}
+  {{with .Report}}
+  <main class="result-main">
+    <section class="result-hero">
+      <p class="eyebrow">Inspection report</p>
+      <h1>{{.DisplayReference}}</h1>
+    </section>
+    {{template "result-panel.html" $}}
+  </main>
+  {{end}}
+  {{end}}
+</div>
+<div id="loading" class="htmx-indicator loading-card" aria-live="polite" aria-label="Inspecting image metadata">
+  <div class="loading-content">
+    <div class="loading-spinner"></div>
+    <p>Inspecting registry metadata...</p>
+  </div>
+</div>
