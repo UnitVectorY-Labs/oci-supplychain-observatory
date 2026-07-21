@@ -33,11 +33,18 @@ type PayloadViews struct {
 
 type PayloadRow struct {
 	Key         string
+	Label       string
 	Type        string
+	Meaning     string
 	Value       string
 	Depth       int
 	Raw         string
 	DecodedRows []PayloadRow
+}
+
+type BuildMaterial struct {
+	URI     string
+	Digests map[string]string
 }
 
 func (r PayloadRow) DepthClass() string {
@@ -208,6 +215,9 @@ func SummarizeJSON(raw []byte) ([]KV, []KV, bool) {
 			nestedSummary, nestedSignatures, nestedSBOM := SummarizeJSON(rawPred)
 			out, signatures, isSBOM = append(out, nestedSummary...), append(signatures, nestedSignatures...), isSBOM || nestedSBOM
 		}
+	} else if pred, ok := obj["predicate"].(string); ok && isStructuredJSON([]byte(pred)) {
+		nestedSummary, nestedSignatures, nestedSBOM := SummarizeJSON([]byte(pred))
+		out, signatures, isSBOM = append(out, nestedSummary...), append(signatures, nestedSignatures...), isSBOM || nestedSBOM
 	}
 	if len(out) == 0 {
 		out = append(out, KV{"JSON", "valid JSON payload"})
@@ -220,6 +230,93 @@ func summarizeNested(payload string) ([]KV, []KV, bool) {
 		return SummarizeJSON(decoded)
 	}
 	return nil, nil, false
+}
+
+// ExtractBuildMaterials returns only materials explicitly published in SLSA-style
+// provenance. It follows DSSE/base64 wrappers but never infers ancestry from image layers.
+func ExtractBuildMaterials(raw []byte) []BuildMaterial {
+	var doc any
+	if json.Unmarshal(raw, &doc) != nil {
+		if decoded, ok := DecodeBase64JSON(strings.TrimSpace(string(raw))); ok {
+			return ExtractBuildMaterials(decoded)
+		}
+		return nil
+	}
+	var out []BuildMaterial
+	collectBuildMaterials(doc, &out)
+	return out
+}
+
+func collectBuildMaterials(v any, out *[]BuildMaterial) {
+	switch x := v.(type) {
+	case map[string]any:
+		if predicateType, _ := x["predicateType"].(string); strings.Contains(strings.ToLower(predicateType), "slsa.dev/provenance") {
+			collectMaterialFields(x["predicate"], out)
+		}
+		for key, value := range x {
+			if key == "payload" || key == "Payload" {
+				if encoded, ok := value.(string); ok {
+					if decoded, ok := DecodeBase64JSON(strings.TrimSpace(encoded)); ok {
+						*out = append(*out, ExtractBuildMaterials(decoded)...)
+					}
+				}
+			}
+			collectBuildMaterials(value, out)
+		}
+	case []any:
+		for _, value := range x {
+			collectBuildMaterials(value, out)
+		}
+	}
+}
+
+func collectMaterialFields(v any, out *[]BuildMaterial) {
+	switch x := v.(type) {
+	case string:
+		if isStructuredJSON([]byte(x)) {
+			var decoded any
+			if json.Unmarshal([]byte(x), &decoded) == nil {
+				collectMaterialFields(decoded, out)
+			}
+		}
+	case map[string]any:
+		for key, value := range x {
+			if key == "materials" || key == "resolvedDependencies" {
+				if items, ok := value.([]any); ok {
+					for _, item := range items {
+						if material, ok := buildMaterialFromValue(item); ok {
+							*out = append(*out, material)
+						}
+					}
+				}
+			}
+			collectMaterialFields(value, out)
+		}
+	case []any:
+		for _, value := range x {
+			collectMaterialFields(value, out)
+		}
+	}
+}
+
+func buildMaterialFromValue(v any) (BuildMaterial, bool) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return BuildMaterial{}, false
+	}
+	uri, _ := obj["uri"].(string)
+	if uri == "" {
+		uri, _ = obj["name"].(string)
+	}
+	digests := map[string]string{}
+	if values, ok := obj["digest"].(map[string]any); ok {
+		for algorithm, value := range values {
+			if text, ok := value.(string); ok && text != "" {
+				digests[algorithm] = text
+			}
+		}
+	}
+	return BuildMaterial{URI: uri, Digests: digests}, uri != ""
 }
 
 func CertificateSummary(rawBase64 string) []KV {
@@ -418,9 +515,9 @@ func flattenRows(rows *[]PayloadRow, key string, v any, depth, limit int) {
 	switch x := v.(type) {
 	case decodedValue:
 		nested := flattenPayloadRowsFromValue(x.Value, limit-len(*rows))
-		*rows = append(*rows, PayloadRow{Key: key, Type: x.Kind, Raw: x.Raw, DecodedRows: nested, Depth: depth})
+		*rows = append(*rows, payloadRow(key, x.Kind, "", depth, x.Raw, nested))
 	case map[string]any:
-		*rows = append(*rows, PayloadRow{Key: key, Type: fmt.Sprintf("object (%d)", len(x)), Depth: depth})
+		*rows = append(*rows, payloadRow(key, fmt.Sprintf("object (%d)", len(x)), "", depth, "", nil))
 		keys := make([]string, 0, len(x))
 		for k := range x {
 			keys = append(keys, k)
@@ -430,21 +527,107 @@ func flattenRows(rows *[]PayloadRow, key string, v any, depth, limit int) {
 			flattenRows(rows, k, x[k], depth+1, limit)
 		}
 	case []any:
-		*rows = append(*rows, PayloadRow{Key: key, Type: fmt.Sprintf("array (%d)", len(x)), Depth: depth})
+		*rows = append(*rows, payloadRow(key, fmt.Sprintf("array (%d)", len(x)), "", depth, "", nil))
 		for i, item := range x {
 			flattenRows(rows, fmt.Sprintf("[%d]", i), item, depth+1, limit)
 		}
 	case string:
-		*rows = append(*rows, PayloadRow{Key: key, Type: "string", Value: CompactString(x, 2000), Depth: depth})
+		*rows = append(*rows, payloadRow(key, "string", CompactString(x, 2000), depth, "", nil))
 	case float64:
-		*rows = append(*rows, PayloadRow{Key: key, Type: "number", Value: fmt.Sprint(x), Depth: depth})
+		*rows = append(*rows, payloadRow(key, "number", fmt.Sprint(x), depth, "", nil))
 	case bool:
-		*rows = append(*rows, PayloadRow{Key: key, Type: "boolean", Value: fmt.Sprint(x), Depth: depth})
+		*rows = append(*rows, payloadRow(key, "boolean", fmt.Sprint(x), depth, "", nil))
 	case nil:
-		*rows = append(*rows, PayloadRow{Key: key, Type: "null", Depth: depth})
+		*rows = append(*rows, payloadRow(key, "null", "", depth, "", nil))
 	default:
-		*rows = append(*rows, PayloadRow{Key: key, Type: fmt.Sprintf("%T", v), Value: fmt.Sprint(v), Depth: depth})
+		*rows = append(*rows, payloadRow(key, fmt.Sprintf("%T", v), fmt.Sprint(v), depth, "", nil))
 	}
+}
+
+func payloadRow(key, typ, value string, depth int, raw string, decoded []PayloadRow) PayloadRow {
+	label, meaning := FieldGuidance(key)
+	return PayloadRow{Key: key, Label: label, Type: typ, Meaning: meaning, Value: value, Depth: depth, Raw: raw, DecodedRows: decoded}
+}
+
+// FieldGuidance gives common OCI supply-chain fields stable, educational labels.
+// Unrecognized keys remain visible and are explicitly identified as schema-specific.
+func FieldGuidance(key string) (string, string) {
+	if key == "$" {
+		return "Payload", "The complete published metadata document."
+	}
+	if strings.HasPrefix(key, "[") {
+		return "Item " + strings.Trim(key, "[]"), "One entry in the surrounding list."
+	}
+	guidance := map[string][2]string{
+		"_type":                  {"Statement schema", "Identifies the in-toto statement format used to bind claims to subjects."},
+		"subject":                {"Attestation subjects", "Immutable artifact(s) that the attestation claims to describe; match these digests to the inspected image."},
+		"predicateType":          {"Claim type", "URI naming the predicate schema and therefore how the claim body should be interpreted."},
+		"predicate":              {"Claims", "Type-specific facts asserted by the attestation producer."},
+		"payloadType":            {"Signed payload format", "DSSE domain-separation value identifying how the decoded payload is interpreted."},
+		"payload":                {"Signed statement", "Base64-encoded statement covered by the DSSE signatures."},
+		"signatures":             {"Envelope signatures", "Cryptographic signatures over the DSSE payload; presence alone does not mean this application verified them."},
+		"sig":                    {"Signature bytes", "Base64-encoded cryptographic signature."},
+		"keyid":                  {"Key hint", "Optional identifier that may help a verifier select a public key; it is not proof of identity."},
+		"critical":               {"Signed Cosign claims", "Fields covered by a Cosign simple-signing signature."},
+		"optional":               {"Optional Cosign claims", "Producer-supplied signed metadata whose semantics depend on the producer."},
+		"docker-reference":       {"Repository identity", "Repository name asserted by the Cosign payload; the digest is the immutable identity."},
+		"docker-manifest-digest": {"Signed image digest", "Immutable manifest digest that the Cosign payload claims was signed."},
+		"spdxVersion":            {"SPDX version", "Version of the SPDX document model used by this SBOM."},
+		"SPDXID":                 {"SPDX element ID", "Document-local identifier used to connect packages, files, and relationships."},
+		"documentNamespace":      {"Document namespace", "Globally unique namespace that distinguishes this SPDX document and its element IDs."},
+		"creationInfo":           {"SBOM creation", "Who or what created the SBOM and when it was produced."},
+		"creators":               {"SBOM creators", "Organizations, people, or tools that created the SPDX document."},
+		"created":                {"Created at", "Timestamp reported by the metadata producer."},
+		"packages":               {"Packages", "Software package records observed or declared in the SBOM."},
+		"relationships":          {"Relationships", "Explicit links such as DESCRIBES, CONTAINS, or DEPENDS_ON between SPDX elements."},
+		"relationshipType":       {"Relationship kind", "SPDX-defined meaning of the link between two elements."},
+		"licenseDeclared":        {"Declared license", "License expression stated by the package producer or SBOM author; not a legal conclusion."},
+		"licenseConcluded":       {"Concluded license", "License expression concluded by the SBOM creator; NOASSERTION means no conclusion was made."},
+		"downloadLocation":       {"Package source", "Location from which the package can be obtained; NOASSERTION means it was not established."},
+		"filesAnalyzed":          {"Files analyzed", "Whether package-level license and verification fields were derived from analyzing package files."},
+		"bomFormat":              {"SBOM format", "Identifies a CycloneDX bill of materials."},
+		"specVersion":            {"Specification version", "Version of the document schema used by this payload."},
+		"components":             {"Components", "Software components recorded in a CycloneDX SBOM."},
+		"dependencies":           {"Dependency graph", "Declared dependency relationships between CycloneDX components."},
+		"buildDefinition":        {"Build definition", "External inputs and parameters that describe what the builder was asked to build."},
+		"buildType":              {"Build process type", "URI identifying the build workflow schema needed to interpret build parameters."},
+		"externalParameters":     {"External build parameters", "Inputs controlled outside the builder and relevant to reproducing or evaluating the build."},
+		"internalParameters":     {"Internal build parameters", "Builder-controlled settings; these may be redacted and are not normally policy inputs."},
+		"resolvedDependencies":   {"Resolved build inputs", "Immutable dependencies available to the builder, which may include source and base container images."},
+		"materials":              {"Build materials", "Inputs used by older SLSA provenance formats; entries may include source and base images."},
+		"runDetails":             {"Build execution", "Who ran the build and execution-specific metadata about that run."},
+		"builder":                {"Builder identity", "Identity of the build platform that produced the artifact, as asserted by provenance."},
+		"invocationId":           {"Build invocation ID", "Identifier for this individual build execution."},
+		"startedOn":              {"Build started", "Producer-reported start time for the build execution."},
+		"finishedOn":             {"Build finished", "Producer-reported completion time for the build execution."},
+		"byproducts":             {"Build byproducts", "Additional artifacts produced during the build that are not primary subjects."},
+		"verificationMaterial":   {"Verification material", "Certificates and transparency-log evidence supplied for signature verification."},
+		"certificate":            {"Signing certificate", "Certificate supplied to associate a signing key with an identity; trust requires cryptographic verification."},
+		"tlogEntries":            {"Transparency-log entries", "Records intended to prove the signing event was logged; presence is not verification."},
+		"digest":                 {"Content digest", "Cryptographic content identifier. Its meaning depends on the surrounding subject or material."},
+		"uri":                    {"Resource URI", "Producer-supplied identifier for a subject or build input."},
+		"name":                   {"Name", "Human-readable or schema-defined name; use the surrounding object to determine what it names."},
+		"id":                     {"Identifier", "Schema-defined identity for the surrounding object."},
+	}
+	if entry, ok := guidance[key]; ok {
+		return entry[0], entry[1]
+	}
+	return humanizeField(key), "Producer- or schema-defined field; interpret it using the surrounding predicate type."
+}
+
+func humanizeField(key string) string {
+	var out []rune
+	for i, r := range key {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			out = append(out, ' ')
+		}
+		out = append(out, r)
+	}
+	s := strings.ReplaceAll(string(out), "_", " ")
+	if s == "" {
+		return "Field"
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func flattenPayloadRowsFromValue(v any, limit int) []PayloadRow {

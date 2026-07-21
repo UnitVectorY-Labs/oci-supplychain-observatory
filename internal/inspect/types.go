@@ -64,8 +64,10 @@ type Artifact struct {
 	ArtifactType         string
 	Size                 int64
 	VerificationStatus   string
+	VerificationDetail   string
 	Summary              []oci.KV
 	Signatures           []oci.KV
+	RelatedImages        []RelatedImage
 	Preview              string
 	PreviewTruncated     bool
 	RawView              string
@@ -79,6 +81,12 @@ type Artifact struct {
 	Downloadable         bool
 	Raw                  []byte
 	Error                string
+}
+
+type RelatedImage struct {
+	Reference    string
+	EvidenceURI  string
+	Relationship string
 }
 
 func (r *Report) ArtifactCount() int {

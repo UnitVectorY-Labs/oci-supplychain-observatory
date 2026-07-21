@@ -30,6 +30,19 @@ func TestSummarizeJSONDetectsCycloneDX(t *testing.T) {
 	}
 }
 
+func TestSummarizeJSONExpandsJSONStringPredicate(t *testing.T) {
+	summary, _, isSBOM := SummarizeJSON([]byte(`{"predicateType":"https://spdx.dev/Document","predicate":"{\"spdxVersion\":\"SPDX-2.3\",\"packages\":[{},{}]}"}`))
+	if !isSBOM {
+		t.Fatal("expected SBOM")
+	}
+	for _, item := range summary {
+		if item.Key == "Package count" && item.Value == "2" {
+			return
+		}
+	}
+	t.Fatalf("missing package count in %#v", summary)
+}
+
 func TestBuildPayloadViewsExpandsBase64JSONFields(t *testing.T) {
 	raw := []byte(`{"payload":"eyJzdWJqZWN0IjpbeyJuYW1lIjoiaW1hZ2UiLCJkaWdlc3QiOnsic2hhMjU2IjoiYWJjIn19XX0="}`)
 	views := BuildPayloadViews(raw, 4096)
@@ -98,6 +111,29 @@ func TestBuildPayloadViewsDecodesCertificateRawBytes(t *testing.T) {
 	subject := findPayloadRowDeep(rawBytes.DecodedRows, "subject")
 	if subject == nil || subject.Value == "" {
 		t.Fatalf("missing decoded certificate subject in %#v", rawBytes.DecodedRows)
+	}
+}
+
+func TestFieldGuidanceExplainsSupplyChainSemantics(t *testing.T) {
+	label, meaning := FieldGuidance("predicateType")
+	if label != "Claim type" || meaning == "" {
+		t.Fatalf("guidance = %q, %q", label, meaning)
+	}
+	label, meaning = FieldGuidance("vendorExtension")
+	if label != "Vendor Extension" || meaning == "" {
+		t.Fatalf("fallback guidance = %q, %q", label, meaning)
+	}
+}
+
+func TestExtractBuildMaterialsFromDSSEProvenance(t *testing.T) {
+	statement := `{"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"resolvedDependencies":[{"uri":"pkg:docker/gcr.io/distroless/base-debian13","digest":{"sha256":"abc"}}]}}}`
+	raw := []byte(`{"payload":"` + base64.StdEncoding.EncodeToString([]byte(statement)) + `"}`)
+	materials := ExtractBuildMaterials(raw)
+	if len(materials) != 1 {
+		t.Fatalf("materials = %#v", materials)
+	}
+	if materials[0].URI != "pkg:docker/gcr.io/distroless/base-debian13" || materials[0].Digests["sha256"] != "abc" {
+		t.Fatalf("material = %#v", materials[0])
 	}
 }
 

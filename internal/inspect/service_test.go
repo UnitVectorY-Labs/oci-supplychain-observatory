@@ -114,6 +114,23 @@ func TestInspectSkipsNonMetadataLayersFromDigestTagIndex(t *testing.T) {
 	}
 }
 
+func TestRelatedImagesAcceptsOnlyAllowListedDigestMaterials(t *testing.T) {
+	service := NewService(testConfig(), nil, nil, nil)
+	digest := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	images := service.relatedImages([]oci.BuildMaterial{
+		{URI: "pkg:docker/gcr.io/distroless/base-debian13", Digests: map[string]string{"sha256": digest}},
+		{URI: "https://github.com/example/source", Digests: map[string]string{"sha256": digest}},
+		{URI: "pkg:docker/evil.invalid/image", Digests: map[string]string{"sha256": digest}},
+	})
+	if len(images) != 1 {
+		t.Fatalf("images = %#v", images)
+	}
+	want := "gcr.io/distroless/base-debian13@sha256:" + digest
+	if images[0].Reference != want {
+		t.Fatalf("reference = %q, want %q", images[0].Reference, want)
+	}
+}
+
 type fakeRegistry struct {
 	registry    string
 	repository  string

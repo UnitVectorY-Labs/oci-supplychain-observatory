@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -161,7 +162,8 @@ func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, tar
 			Digest:             resp.Digest,
 			MediaType:          resp.MediaType,
 			TargetDigest:       target.Digest,
-			VerificationStatus: "Discovered",
+			VerificationStatus: "Not verified",
+			VerificationDetail: "The artifact's cryptographic signature, signer identity, and trust policy were not evaluated.",
 			Size:               resp.Size,
 			Summary:            []oci.KV{{Key: "Legacy tag", Value: tag}, {Key: "Manifest layers", Value: strconv.Itoa(len(manifest.Layers))}},
 		}
@@ -216,7 +218,8 @@ func (s *Service) artifactsFromDescriptor(ctx context.Context, ref reference.Ima
 		ArtifactType:       desc.ArtifactType,
 		Size:               desc.Size,
 		TargetDigest:       targetDigest,
-		VerificationStatus: "Discovered",
+		VerificationStatus: "Not verified",
+		VerificationDetail: "The artifact's cryptographic signature, signer identity, and trust policy were not evaluated.",
 		Summary:            []oci.KV{{Key: "Artifact type", Value: oci.ValueOr(desc.ArtifactType, "not provided")}, {Key: "Media type", Value: oci.ValueOr(desc.MediaType, "not provided")}},
 	}
 	for k, v := range desc.Annotations {
@@ -244,6 +247,7 @@ func (s *Service) artifactsFromDescriptor(ctx context.Context, ref reference.Ima
 		summary, signatures, isSBOM := oci.SummarizeJSON(resp.Bytes)
 		artifact.Summary = append(artifact.Summary, summary...)
 		artifact.Signatures = append(artifact.Signatures, signatures...)
+		artifact.RelatedImages = s.relatedImages(oci.ExtractBuildMaterials(resp.Bytes))
 		if artifact.Type == "Attestation" && isSBOM {
 			artifact.Type = "SBOM attestation"
 		}
@@ -299,12 +303,44 @@ func (s *Service) artifactsFromManifestLayers(ctx context.Context, ref reference
 		summary, signatures, isSBOM := oci.SummarizeArtifactPayload(raw, layer.MediaType)
 		artifact.Summary = append(artifact.Summary, summary...)
 		artifact.Signatures = append(artifact.Signatures, signatures...)
+		artifact.RelatedImages = s.relatedImages(oci.ExtractBuildMaterials(raw))
 		if artifact.Type == "Attestation" && isSBOM {
 			artifact.Type = "SBOM attestation"
 		}
 		artifacts = append(artifacts, artifact)
 	}
 	return artifacts
+}
+
+func (s *Service) relatedImages(materials []oci.BuildMaterial) []RelatedImage {
+	seen := map[string]bool{}
+	var images []RelatedImage
+	for _, material := range materials {
+		candidate := strings.TrimSpace(material.URI)
+		for _, prefix := range []string{"pkg:docker/", "docker-image://", "oci://"} {
+			candidate = strings.TrimPrefix(candidate, prefix)
+		}
+		candidate, _ = url.PathUnescape(candidate)
+		if before, _, ok := strings.Cut(candidate, "?"); ok {
+			candidate = before
+		}
+		if !strings.Contains(candidate, "@") {
+			if digest := material.Digests["sha256"]; digest != "" {
+				candidate += "@sha256:" + strings.TrimPrefix(digest, "sha256:")
+			}
+		}
+		parsed, err := reference.Parse(candidate, reference.Config{AllowedRegistry: s.cfg.AllowedRegistry})
+		if err != nil || parsed.Digest == "" || seen[parsed.Normalized] {
+			continue
+		}
+		seen[parsed.Normalized] = true
+		images = append(images, RelatedImage{
+			Reference:    parsed.Normalized,
+			EvidenceURI:  material.URI,
+			Relationship: "Declared container build input (often a base image)",
+		})
+	}
+	return images
 }
 
 func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {

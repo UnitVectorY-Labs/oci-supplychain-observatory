@@ -67,14 +67,17 @@
     {{if .ArtifactCount}}
       {{if .Signatures}}
       <h3 class="artifact-section-title">Signatures</h3>
+      <p class="section-explainer">Signatures bind an image digest to a signing key or identity. Discovery is not verification: check the status on each artifact.</p>
       <div class="artifact-stack">{{range .Signatures}}{{template "artifact" .}}{{end}}</div>
       {{end}}
       {{if .Attestations}}
       <h3 class="artifact-section-title">Attestations and Provenance</h3>
+      <p class="section-explainer">Attestations are signed claims about an image. The predicate type defines what is being claimed; provenance describes how a build was produced.</p>
       <div class="artifact-stack">{{range .Attestations}}{{template "artifact" .}}{{end}}</div>
       {{end}}
       {{if .SBOMs}}
       <h3 class="artifact-section-title">SBOMs</h3>
+      <p class="section-explainer">An SBOM is the publisher's inventory of software components. It is evidence to explore—not a vulnerability scan or proof that every component is present.</p>
       <div class="artifact-stack">{{range .SBOMs}}{{template "artifact" .}}{{end}}</div>
       {{end}}
     {{else}}
@@ -97,8 +100,30 @@
     {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
     {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
     {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
+    <dt>Verification</dt><dd><span class="chip warn">{{.VerificationStatus}}</span><span class="verification-detail">{{.VerificationDetail}}</span></dd>
   </dl>
   {{if .Error}}<p class="chip bad">{{.Error}}</p>{{end}}
+  {{if .Summary}}
+  <section class="artifact-summary" aria-label="Artifact summary">
+    <h4>What this artifact says</h4>
+    <dl class="detail-list summary-list">
+      {{range .Summary}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}
+      {{range .Signatures}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}
+    </dl>
+  </section>
+  {{end}}
+  {{if .RelatedImages}}
+  <section class="related-images" aria-label="Related container images">
+    <h4>Container image build inputs</h4>
+    <p>These references were declared by published provenance. They are not inferred from filesystem layers, and a build input is not necessarily the Dockerfile's final <code>FROM</code> image.</p>
+    {{range .RelatedImages}}
+    <div class="related-image">
+      <div><strong>{{.Relationship}}</strong><code>{{.Reference}}</code><span>Evidence: {{.EvidenceURI}}</span></div>
+      <form method="post" action="/inspect"><input type="hidden" name="image" value="{{.Reference}}"><button class="btn-secondary related-inspect" type="submit">Inspect image</button></form>
+    </div>
+    {{end}}
+  </section>
+  {{end}}
   {{if .Downloadable}}<p><a class="btn-secondary btn-download" href="/artifacts/{{.ID}}/download">{{template "icon-download"}} Download raw artifact</a></p>{{end}}
   {{if .RawView}}
   <div class="payload-tabs" data-artifact-tabs>
@@ -113,7 +138,7 @@
           <table class="payload-table">
             {{template "payloadColgroup"}}
             <thead>
-              <tr><th>Attribute</th><th>Type</th><th>Value</th></tr>
+              <tr><th>Field</th><th>Meaning</th><th>Published value</th></tr>
             </thead>
             <tbody>
               {{template "payloadRows" .DecodedRows}}
@@ -136,8 +161,8 @@
 {{define "payloadRows"}}
 {{range .}}
 <tr class="{{if .DecodedRows}}payload-row-has-expansion{{end}}">
-  <td class="payload-key {{.DepthClass}}">{{.Key}}</td>
-  <td class="payload-type">{{.Type}}</td>
+  <td class="payload-key {{.DepthClass}}"><span class="field-label">{{.Label}}</span><code>{{.Key}}</code><span class="field-type">{{.Type}}</span></td>
+  <td class="payload-meaning">{{.Meaning}}</td>
   <td class="payload-value">{{if not .DecodedRows}}{{.Value}}{{end}}</td>
 </tr>
 {{if .DecodedRows}}
@@ -175,7 +200,7 @@
 {{define "payloadColgroup"}}
 <colgroup>
   <col class="payload-col-key">
-  <col class="payload-col-type">
+  <col class="payload-col-meaning">
   <col class="payload-col-value">
 </colgroup>
 {{end}}
