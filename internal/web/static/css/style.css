@@ -281,6 +281,13 @@ summary:focus {
   letter-spacing: .04em;
 }
 .artifact-section-title:first-child { margin-top: 0; }
+.section-explainer {
+  max-width: 850px;
+  margin: -4px 0 12px;
+  color: #a8a29e;
+  font-size: .88rem;
+  line-height: 1.5;
+}
 
 .artifact-card { padding: 14px; }
 .artifact-top {
@@ -316,6 +323,37 @@ summary:focus {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+.verification-detail {
+  display: block;
+  margin-top: 6px;
+  color: #a8a29e;
+  font-size: .82rem;
+}
+.artifact-summary,
+.related-images {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid rgba(45, 212, 191, .2);
+  border-radius: 8px;
+  background: rgba(45, 212, 191, .035);
+}
+.artifact-summary h4,
+.related-images h4 { margin: 0 0 8px; color: #99f6e4; }
+.summary-list { margin-bottom: 0; }
+.related-images > p { margin: 0 0 12px; color: #b7b3aa; font-size: .85rem; line-height: 1.45; }
+.related-image {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(148, 163, 184, .14);
+}
+.related-image:first-of-type { border-top: 0; }
+.related-image code,
+.related-image span { display: block; margin-top: 5px; overflow-wrap: anywhere; }
+.related-image span { color: #78716c; font-size: .75rem; }
+.related-inspect { height: 38px; white-space: nowrap; }
 
 details { margin-top: 10px; }
 summary { cursor: pointer; color: #99f6e4; }
@@ -415,8 +453,8 @@ pre {
   font-size: .78rem;
 }
 
-.payload-col-key { width: 34%; }
-.payload-col-type { width: 170px; }
+.payload-col-key { width: 29%; }
+.payload-col-meaning { width: 34%; }
 .payload-col-value { width: auto; }
 
 .payload-table th {
@@ -441,10 +479,21 @@ pre {
   white-space: normal;
   overflow-wrap: anywhere;
 }
-
-.payload-type {
-  color: #99f6e4;
-  white-space: nowrap;
+.payload-key code,
+.field-type {
+  display: block;
+  margin-top: 3px;
+  color: #78716c;
+  font-size: .7rem;
+}
+.field-label {
+  color: #fafaf9;
+  font-family: "Segoe UI", "SF Pro Text", "Ubuntu", system-ui, sans-serif;
+  font-weight: 700;
+}
+.payload-meaning {
+  color: #b7b3aa;
+  line-height: 1.4;
 }
 
 .payload-value {
@@ -621,9 +670,11 @@ pre {
   }
   .app-header-inner,
   .section-head,
-  .artifact-top {
+  .artifact-top,
+  .related-image {
     display: block;
   }
+  .related-image form { margin-top: 10px; }
   .app-brand {
     margin-top: 10px;
   }

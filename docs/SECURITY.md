@@ -16,4 +16,6 @@ Important controls:
 - Artifact downloads are served only for artifacts discovered during inspection and retained by the current cache/service process.
 - Decoded payload views parse JSON and recursively expand embedded base64 JSON for display only. Decoding does not imply cryptographic verification or policy trust.
 
-Verification status is deliberately explicit. The current implementation discovers and decodes signatures, attestations, provenance, and SBOM payloads, but does not yet perform full in-process Sigstore cryptographic verification or policy trust evaluation.
+Verification status is deliberately explicit. The UI keeps discovery, successful decoding, cryptographic validity, signer identity, and policy trust as separate concepts. The current implementation provides discovery and decoding only, labels every artifact `Not verified`, and does not perform in-process Sigstore verification or policy evaluation. Displaying a certificate or transparency-log record does not establish that it is valid or trusted.
+
+Related container images are accepted only from explicit SLSA-style provenance material records, must include a SHA-256 digest, and must pass the same registry allow-list and reference validation as direct user input. Layer overlap is not used to infer a base image because shared content does not prove a build relationship.
