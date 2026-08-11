@@ -114,6 +114,41 @@ func TestInspectSkipsNonMetadataLayersFromDigestTagIndex(t *testing.T) {
 	}
 }
 
+func TestInspectAttachesIndexAttestationToPlatformAndFindsBuildInput(t *testing.T) {
+	registry := fakeRegistryForImage("ghcr.io", "example/app").
+		withMainIndex().
+		withEmbeddedBuildkitAttestation()
+	service := NewService(testConfig(), registry, cache.NewMemory[*Report](), nil)
+	report, err := service.Inspect(context.Background(), "ghcr.io/example/app:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Platforms) != 1 {
+		t.Fatalf("platforms = %d, want 1", len(report.Platforms))
+	}
+	platform := report.Platforms[0]
+	if len(platform.Attestations) != 1 {
+		t.Fatalf("attestations = %d, want 1: %#v", len(platform.Attestations), platform.Attestations)
+	}
+	if platform.Attestations[0].Purpose != "SLSA build provenance" {
+		t.Fatalf("purpose = %q, want SLSA build provenance", platform.Attestations[0].Purpose)
+	}
+	if len(report.BuildInputs) != 1 || report.BuildInputs[0].Reference != "golang:1.26.4" {
+		t.Fatalf("build inputs = %#v", report.BuildInputs)
+	}
+}
+
+func TestExactLayerPrefix(t *testing.T) {
+	base := []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:b"}}
+	target := []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:b"}, {Digest: "sha256:c"}}
+	if !exactLayerPrefix(target, base) {
+		t.Fatal("expected exact base layer prefix")
+	}
+	if exactLayerPrefix(target, []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:x"}}) {
+		t.Fatal("unexpected prefix match")
+	}
+}
+
 type fakeRegistry struct {
 	registry    string
 	repository  string
@@ -156,6 +191,46 @@ func (r *fakeRegistry) withMainManifest() *fakeRegistry {
 		resp:     response(testDigest, oci.MediaOCIManifest),
 		manifest: oci.Manifest{MediaType: oci.MediaOCIManifest},
 	}
+	return r
+}
+
+func (r *fakeRegistry) withEmbeddedBuildkitAttestation() *fakeRegistry {
+	platformDigest := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	attestationDigest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	provenance := []byte(`{"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"example/app","digest":{"sha256":"bbbb"}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{"buildDefinition":{"buildType":"https://moby.buildkit/v1","externalParameters":{"configSource":{"path":"Dockerfile"}},"resolvedDependencies":[{"uri":"pkg:docker/golang@1.26.4?platform=linux%2Famd64","digest":{"sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}}]},"runDetails":{"builder":{"id":"https://moby.buildkit"}}}}`)
+	provenanceDigest := r.addBlob("embedded-provenance", provenance)
+	imageLayerDigest := "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	r.manifests[platformDigest] = fakeManifest{
+		resp: response(platformDigest, oci.MediaOCIManifest),
+		manifest: oci.Manifest{MediaType: oci.MediaOCIManifest, Layers: []oci.Descriptor{{
+			MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+			Digest:    imageLayerDigest,
+			Size:      100,
+		}}},
+	}
+	r.manifests[attestationDigest] = fakeManifest{
+		resp: response(attestationDigest, oci.MediaOCIManifest),
+		manifest: oci.Manifest{MediaType: oci.MediaOCIManifest, Layers: []oci.Descriptor{{
+			MediaType: "application/vnd.in-toto+json",
+			Digest:    provenanceDigest,
+			Size:      int64(len(provenance)),
+			Annotations: map[string]string{
+				"in-toto.io/predicate-type": "https://slsa.dev/provenance/v1",
+			},
+		}}},
+	}
+	main := r.manifests["latest"]
+	main.manifest.Manifests = append(main.manifest.Manifests, oci.Descriptor{
+		MediaType: oci.MediaOCIManifest,
+		Digest:    attestationDigest,
+		Platform:  &oci.Platform{OS: "unknown", Architecture: "unknown"},
+		Annotations: map[string]string{
+			"vnd.docker.reference.type":   "attestation-manifest",
+			"vnd.docker.reference.digest": platformDigest,
+		},
+	})
+	r.manifests["latest"] = main
+	r.manifests["v3.0.2"] = main
 	return r
 }
 
@@ -292,6 +367,7 @@ func testConfig() config.Config {
 		MaxPreviewBytes:  1 << 20,
 		MaxPlatforms:     10,
 		MaxReferrers:     10,
+		MaxLineageInputs: 10,
 	}
 }
 

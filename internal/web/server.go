@@ -12,11 +12,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/config"
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/inspect"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/reference"
 )
 
@@ -44,8 +46,9 @@ func New(cfg config.Config, inspector *inspect.Service, logger *slog.Logger) (*S
 		return nil, err
 	}
 	funcs := template.FuncMap{
-		"assetURL": func(path string) string { return assetURL(path, assetVersions) },
-		"join":     strings.Join,
+		"assetURL":   func(path string) string { return assetURL(path, assetVersions) },
+		"join":       strings.Join,
+		"inspectURL": func(image string) string { return "/inspect?image=" + url.QueryEscape(image) },
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -62,6 +65,7 @@ func (s *Server) Start() error {
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
 	mux.HandleFunc("GET /", s.handleIndex)
+	mux.HandleFunc("GET /inspect", s.handleInspect)
 	mux.HandleFunc("POST /inspect", s.wrapWithOriginCheck(s.handleInspect))
 	mux.HandleFunc("GET /inspect/jobs/{id}", s.handleInspectJob)
 	mux.HandleFunc("GET /artifacts/{id}/download", s.handleArtifactDownload)
@@ -158,6 +162,8 @@ func (s *Server) handleInspectJob(w http.ResponseWriter, r *http.Request) {
 		message := "The registry request could not be completed."
 		if errors.Is(job.Err, reference.ErrInvalidInput) || errors.Is(job.Err, reference.ErrRegistryNotAllowed) {
 			message = job.Err.Error()
+		} else if errors.Is(job.Err, oci.ErrAuthenticationNeeded) {
+			message = "The registry denied anonymous access to this image or its metadata."
 		}
 		s.render(w, http.StatusOK, "result-panel.html", ResultData{Error: &ErrorData{Title: "Inspection failed", Message: message}})
 		return

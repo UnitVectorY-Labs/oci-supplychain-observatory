@@ -16,11 +16,15 @@
 {{else}}
 {{with .Report}}
 <section id="inspection-panel">
-  <section class="metadata-card" aria-label="Inspection metadata">
-    <dl class="metadata-list">
-      <dt>Image</dt><dd>{{.DisplayReference}}</dd>
-      <dt>Digest</dt><dd>{{.ResolvedDigest}}</dd>
-      <dt>Repository</dt><dd>{{.Registry}}/{{.Repository}}</dd>
+  <section class="report-overview" aria-label="Inspection metadata">
+    <div>
+      <p class="eyebrow">Resolved image</p>
+      <p class="report-reference mono">{{.Canonical}}</p>
+    </div>
+    <dl class="overview-facts">
+      <div><dt>Platforms</dt><dd>{{len .Platforms}}</dd></div>
+      <div><dt>Artifacts</dt><dd>{{.ArtifactCount}}</dd></div>
+      <div><dt>Build inputs</dt><dd>{{len .BuildInputs}}</dd></div>
     </dl>
   </section>
 
@@ -28,9 +32,74 @@
   <div class="status-row">{{range .Warnings}}<span class="chip warn">{{.}}</span>{{end}}</div>
   {{end}}
 
-  <div class="target-tabs" data-target-tabs>
-    <div class="tab-list" role="tablist" aria-label="Inspected manifests">
-      <button type="button" class="tab-button is-active" data-target-tab="target-top" role="tab" aria-selected="true">Top-level</button>
+  {{if .BuildInputs}}
+  <section class="report-section" aria-labelledby="build-inputs-title">
+    <div class="report-section-head">
+      <div>
+        <p class="eyebrow">Build inputs</p>
+        <h2 id="build-inputs-title">Images used to produce this image</h2>
+      </div>
+    </div>
+    <div class="build-input-grid">
+      {{range .BuildInputs}}
+      <article class="build-input-card">
+        <div class="build-input-head">
+          <strong class="mono">{{.Reference}}</strong>
+          <span class="chip">{{.Role}}</span>
+        </div>
+        <dl class="compact-facts">
+          <dt>Platforms</dt><dd>{{join .Platforms ", "}}</dd>
+          <dt>Evidence</dt><dd>{{join .Evidence " + "}}</dd>
+          {{if .Digest}}<dt>Digest</dt><dd class="mono digest-value">{{.Digest}}</dd>{{end}}
+          {{if .SharedLayers}}<dt>Layer match</dt><dd>{{.SharedLayers}} of {{.BaseLayerCount}} base layers; {{.AddedLayerCount}} added</dd>{{end}}
+        </dl>
+        {{if .Inspectable}}
+        <a class="btn-secondary btn-inline" href="{{inspectURL .Canonical}}">Inspect this image’s evidence</a>
+        {{else}}
+        <p class="support-note">This reference could not be inspected under the current registry allow-list.</p>
+        {{end}}
+      </article>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
+  <section class="report-section" aria-labelledby="coverage-title">
+    <div class="report-section-head">
+      <div>
+        <p class="eyebrow">Evidence coverage</p>
+        <h2 id="coverage-title">Published metadata by image scope</h2>
+      </div>
+      <p class="support-note">Select a scope to inspect its evidence.</p>
+    </div>
+    <div class="coverage-table-wrap">
+      <table class="coverage-table">
+        <thead><tr><th>Scope</th><th>Signatures</th><th>Attestations</th><th>SBOM</th><th>Lineage</th></tr></thead>
+        <tbody>
+          <tr class="is-selected" data-coverage-row="target-top">
+            <td><button type="button" class="scope-link" data-target-link="target-top">Image index</button></td>
+            <td><span class="chip {{if .TopLevel.Signatures}}found{{else}}neutral{{end}}">{{.TopLevel.SignatureStatus}}</span></td>
+            <td><span class="chip {{if .TopLevel.Attestations}}found{{else}}neutral{{end}}">{{.TopLevel.AttestationStatus}}</span></td>
+            <td><span class="chip {{if .TopLevel.SBOMs}}found{{else}}neutral{{end}}">{{.TopLevel.SBOMStatus}}</span></td>
+            <td><span class="chip found">{{len .Platforms}} platforms</span></td>
+          </tr>
+          {{range $idx, $platform := .Platforms}}
+          <tr data-coverage-row="target-platform-{{$idx}}">
+            <td><button type="button" class="scope-link" data-target-link="target-platform-{{$idx}}">{{$platform.Name}}</button></td>
+            <td><span class="chip {{if $platform.Signatures}}found{{else}}neutral{{end}}">{{$platform.SignatureStatus}}</span></td>
+            <td><span class="chip {{if $platform.Attestations}}found{{else}}neutral{{end}}">{{$platform.AttestationStatus}}</span></td>
+            <td><span class="chip {{if $platform.SBOMs}}found{{else}}neutral{{end}}">{{$platform.SBOMStatus}}</span></td>
+            <td>{{if $platform.Base}}<span class="chip found">Base + {{$platform.Base.AddedLayerCount}} layers</span>{{else}}<span class="chip neutral">Unknown</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="target-tabs report-section" data-target-tabs>
+    <div class="tab-list" role="tablist" aria-label="Inspected image scopes">
+      <button type="button" class="tab-button is-active" data-target-tab="target-top" role="tab" aria-selected="true">Image index</button>
       {{range $idx, $platform := .Platforms}}
       <button type="button" class="tab-button" data-target-tab="target-platform-{{$idx}}" role="tab" aria-selected="false">{{$platform.Name}}</button>
       {{end}}
@@ -49,20 +118,37 @@
 {{end}}
 
 {{define "target"}}
-<section class="section-card">
+<section class="section-card target-card">
   <div class="section-head">
     <div>
       <h2>{{.Name}}</h2>
-      <p class="mono">{{.Digest}}</p>
+      <p class="mono digest-value">{{.Digest}}</p>
     </div>
     <span class="chip">{{.Kind}}</span>
   </div>
   <div class="section-body">
-    <dl class="detail-list">
-      {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
-      {{if .OS}}<dt>Platform</dt><dd>{{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}</dd>{{end}}
-      <dt>OCI referrers</dt><dd>{{.ReferrerCount}}</dd>
-    </dl>
+    {{if .Base}}
+    <section class="lineage-block" aria-label="Runtime lineage">
+      <p class="eyebrow">Runtime lineage</p>
+      <div class="lineage-flow">
+        <article class="lineage-node">
+          <span class="node-label">Runtime base</span>
+          <strong class="mono">{{.Base.Reference}}</strong>
+          <span>{{.Base.BaseLayerCount}} shared layers</span>
+          {{if .Base.Inspectable}}<a href="{{inspectURL .Base.Canonical}}">Inspect evidence</a>{{end}}
+        </article>
+        <span class="lineage-arrow" aria-hidden="true">→</span>
+        <article class="lineage-node application-node">
+          <span class="node-label">Application image</span>
+          <strong>{{.Name}}</strong>
+          <span>{{.Base.AddedLayerCount}} added layers</span>
+          <span class="mono digest-value">{{.Digest}}</span>
+        </article>
+      </div>
+      <p class="support-note">Relationship evidence: {{join .Base.Evidence " + "}}.</p>
+    </section>
+    {{end}}
+
     {{range .Warnings}}<p class="chip warn">{{.}}</p>{{end}}
     {{if .ArtifactCount}}
       {{if .Signatures}}
@@ -70,7 +156,7 @@
       <div class="artifact-stack">{{range .Signatures}}{{template "artifact" .}}{{end}}</div>
       {{end}}
       {{if .Attestations}}
-      <h3 class="artifact-section-title">Attestations and Provenance</h3>
+      <h3 class="artifact-section-title">Attestations and provenance</h3>
       <div class="artifact-stack">{{range .Attestations}}{{template "artifact" .}}{{end}}</div>
       {{end}}
       {{if .SBOMs}}
@@ -78,7 +164,19 @@
       <div class="artifact-stack">{{range .SBOMs}}{{template "artifact" .}}{{end}}</div>
       {{end}}
     {{else}}
-      <div class="empty-state">No supply-chain artifacts were discovered for this digest.</div>
+      <div class="empty-state">No supported supply-chain artifacts were discovered for this digest.</div>
+    {{end}}
+
+    {{if .Layers}}
+    <details class="technical-details">
+      <summary>Image manifest details</summary>
+      <dl class="compact-facts">
+        <dt>Media type</dt><dd>{{.MediaType}}</dd>
+        <dt>Layers</dt><dd>{{len .Layers}}</dd>
+        {{if .OS}}<dt>Platform</dt><dd>{{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}</dd>{{end}}
+      </dl>
+      <ol class="layer-list">{{range .Layers}}<li><span class="mono digest-value">{{.Digest}}</span></li>{{end}}</ol>
+    </details>
     {{end}}
   </div>
 </section>
@@ -88,18 +186,52 @@
 <article class="artifact-card">
   <div class="artifact-top">
     <div>
-      <strong>{{.Type}}</strong>
-      <p class="mono muted">{{.Digest}}</p>
+      <strong>{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</strong>
+      <p class="mono muted digest-value">{{.Digest}}</p>
     </div>
+    <span class="chip found">Found and parsed</span>
   </div>
-  <dl class="detail-list">
-    <dt>Discovery</dt><dd>{{.Discovery}}</dd>
-    {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
-    {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
-    {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
+
+  {{if .Facts}}
+  <dl class="artifact-facts">
+    {{range .Facts}}<dt>{{.Key}}</dt><dd>{{if .Link}}<a class="fact-link" href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd>{{end}}
   </dl>
+  {{end}}
+
+  {{if .Components}}
+  <div class="component-table-wrap">
+    {{if .ComponentsTruncated}}<p class="payload-note">Component inventory is limited to the first 200 entries.</p>{{end}}
+    <table class="component-table">
+      <thead><tr><th>Component</th><th>Version</th><th>Ecosystem</th><th>Platform</th><th>Supplier or license</th></tr></thead>
+      <tbody>
+        {{range .Components}}
+        <tr>
+          <td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td>
+          <td>{{if .Version}}{{.Version}}{{else}}—{{end}}</td>
+          <td>{{if .Ecosystem}}{{.Ecosystem}}{{else}}—{{end}}</td>
+          <td>{{if .Platform}}{{.Platform}}{{else}}—{{end}}</td>
+          <td>{{if .Supplier}}{{.Supplier}}{{else if .License}}{{.License}}{{else}}—{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
   {{if .Error}}<p class="chip bad">{{.Error}}</p>{{end}}
-  {{if .Downloadable}}<p><a class="btn-secondary btn-download" href="/artifacts/{{.ID}}/download">{{template "icon-download"}} Download raw artifact</a></p>{{end}}
+  <div class="artifact-actions">
+    {{if .Downloadable}}<a class="btn-secondary btn-inline" href="/artifacts/{{.ID}}/download">{{template "icon-download"}} Download raw artifact</a>{{end}}
+    <details class="technical-details inline-details">
+      <summary>Technical details</summary>
+      <dl class="compact-facts">
+        <dt>Discovery</dt><dd>{{.Discovery}}</dd>
+        {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
+        {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
+        {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
+      </dl>
+    </details>
+  </div>
+
   {{if .RawView}}
   <div class="payload-tabs" data-artifact-tabs>
     <div class="tab-list compact-tabs" role="tablist" aria-label="Artifact payload views">
@@ -112,16 +244,12 @@
         <div class="payload-table-wrap">
           <table class="payload-table">
             {{template "payloadColgroup"}}
-            <thead>
-              <tr><th>Attribute</th><th>Type</th><th>Value</th></tr>
-            </thead>
-            <tbody>
-              {{template "payloadRows" .DecodedRows}}
-            </tbody>
+            <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+            <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
           </table>
         </div>
       {{else}}
-        <div class="empty-state">This payload is not JSON and does not contain base64-encoded JSON.</div>
+        <div class="empty-state">This payload is not structured JSON.</div>
       {{end}}
     </div>
     <div class="artifact-panel" data-artifact-panel="raw" hidden>
@@ -136,16 +264,11 @@
 {{define "payloadRows"}}
 {{range .}}
 <tr class="{{if .DecodedRows}}payload-row-has-expansion{{end}}">
-  <td class="payload-key {{.DepthClass}}">{{.Key}}</td>
-  <td class="payload-type">{{.Type}}</td>
-  <td class="payload-value">{{if not .DecodedRows}}{{.Value}}{{end}}</td>
+  <td class="payload-key {{.DepthClass}}">{{.DisplayKey}}</td>
+  <td class="payload-value">{{if .DecodedRows}}<span class="payload-kind">{{.Type}}</span>{{else}}{{.Value}}{{end}}</td>
 </tr>
 {{if .DecodedRows}}
-<tr class="payload-expansion-row">
-  <td colspan="3">
-    {{template "nestedPayloadTabs" .}}
-  </td>
-</tr>
+<tr class="payload-expansion-row"><td colspan="2">{{template "nestedPayloadTabs" .}}</td></tr>
 {{end}}
 {{end}}
 {{end}}
@@ -160,22 +283,14 @@
     <div class="payload-table-wrap nested-payload-table-wrap">
       <table class="payload-table nested-payload-table">
         {{template "payloadColgroup"}}
-        <tbody>
-          {{template "payloadRows" .DecodedRows}}
-        </tbody>
+        <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
       </table>
     </div>
   </div>
-  <div class="artifact-panel" data-artifact-panel="raw" hidden>
-    <pre class="payload-pre nested-payload-pre">{{.Raw}}</pre>
-  </div>
+  <div class="artifact-panel" data-artifact-panel="raw" hidden><pre class="payload-pre nested-payload-pre">{{.Raw}}</pre></div>
 </div>
 {{end}}
 
 {{define "payloadColgroup"}}
-<colgroup>
-  <col class="payload-col-key">
-  <col class="payload-col-type">
-  <col class="payload-col-value">
-</colgroup>
+<colgroup><col class="payload-col-key"><col class="payload-col-value"></colgroup>
 {{end}}

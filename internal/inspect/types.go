@@ -2,6 +2,7 @@
 package inspect
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
@@ -22,6 +23,7 @@ type Report struct {
 	Platforms           []TargetResult
 	Warnings            []string
 	VerificationMessage string
+	BuildInputs         []BuildInput
 }
 
 func (r *Report) DisplayReference() string {
@@ -48,10 +50,72 @@ type TargetResult struct {
 	SBOMs         []Artifact
 	ReferrerCount int
 	Warnings      []string
+	Layers        []LayerDescriptor
+	Annotations   map[string]string
+	BuildInputs   []BuildInput
+	Base          *BaseRelationship
 }
 
 func (t TargetResult) ArtifactCount() int {
 	return len(t.Signatures) + len(t.Attestations) + len(t.SBOMs)
+}
+
+func (t TargetResult) SignatureStatus() string {
+	return evidenceStatus(len(t.Signatures))
+}
+
+func (t TargetResult) AttestationStatus() string {
+	return evidenceStatus(len(t.Attestations))
+}
+
+func (t TargetResult) SBOMStatus() string {
+	return evidenceStatus(len(t.SBOMs))
+}
+
+func evidenceStatus(count int) string {
+	if count == 0 {
+		return "Not found"
+	}
+	if count == 1 {
+		return "1 found"
+	}
+	return fmt.Sprintf("%d found", count)
+}
+
+type LayerDescriptor struct {
+	Digest    string
+	MediaType string
+	Size      int64
+}
+
+type BuildInput struct {
+	Reference       string
+	Canonical       string
+	Digest          string
+	Registry        string
+	Repository      string
+	Tag             string
+	Role            string
+	Platforms       []string
+	Evidence        []string
+	Inspectable     bool
+	SharedLayers    int
+	BaseLayerCount  int
+	AddedLayerCount int
+}
+
+type BaseRelationship struct {
+	BuildInput
+}
+
+type Component struct {
+	Name      string
+	Version   string
+	Ecosystem string
+	Supplier  string
+	License   string
+	Platform  string
+	PURL      string
 }
 
 type Artifact struct {
@@ -79,6 +143,10 @@ type Artifact struct {
 	Downloadable         bool
 	Raw                  []byte
 	Error                string
+	Purpose              string
+	Facts                []oci.KV
+	Components           []Component
+	ComponentsTruncated  bool
 }
 
 func (r *Report) ArtifactCount() int {

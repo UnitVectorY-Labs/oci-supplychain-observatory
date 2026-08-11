@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,14 @@ import (
 type KV struct {
 	Key   string
 	Value string
+}
+
+func (kv KV) Link() string {
+	parsed, err := url.Parse(strings.TrimSpace(kv.Value))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.String()
 }
 
 type PayloadViews struct {
@@ -38,6 +47,16 @@ type PayloadRow struct {
 	Depth       int
 	Raw         string
 	DecodedRows []PayloadRow
+}
+
+func (r PayloadRow) DisplayKey() string {
+	if strings.HasPrefix(r.Key, "[") && strings.HasSuffix(r.Key, "]") {
+		return "Item"
+	}
+	if r.Key == "$" {
+		return "Document"
+	}
+	return r.Key
 }
 
 func (r PayloadRow) DepthClass() string {

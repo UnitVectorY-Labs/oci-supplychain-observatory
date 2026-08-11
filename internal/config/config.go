@@ -20,6 +20,7 @@ const (
 	DefaultMaxPreviewBytes  = 512 << 10
 	DefaultMaxPlatforms     = 50
 	DefaultMaxReferrers     = 100
+	DefaultMaxLineageInputs = 10
 )
 
 type Config struct {
@@ -34,6 +35,7 @@ type Config struct {
 	MaxPreviewBytes  int64
 	MaxPlatforms     int
 	MaxReferrers     int
+	MaxLineageInputs int
 }
 
 type registryConfig struct {
@@ -70,7 +72,7 @@ func Load() (Config, error) {
 		HTTPAddr:         env("OSO_HTTP_ADDR", env("CTI_HTTP_ADDR", ":8080")),
 		AllowedRegistry:  allowedMap,
 		AllowedList:      list,
-		RequestTimeout:   durationEnv("OSO_REQUEST_TIMEOUT", 20*time.Second),
+		RequestTimeout:   durationEnv("OSO_REQUEST_TIMEOUT", 30*time.Second),
 		ReadTimeout:      durationEnv("OSO_READ_TIMEOUT", 10*time.Second),
 		WriteTimeout:     durationEnv("OSO_WRITE_TIMEOUT", 45*time.Second),
 		IdleTimeout:      durationEnv("OSO_IDLE_TIMEOUT", 120*time.Second),
@@ -78,6 +80,7 @@ func Load() (Config, error) {
 		MaxPreviewBytes:  int64Env("OSO_MAX_PREVIEW_BYTES", DefaultMaxPreviewBytes),
 		MaxPlatforms:     intEnv("OSO_MAX_PLATFORMS", DefaultMaxPlatforms),
 		MaxReferrers:     intEnv("OSO_MAX_REFERRERS", DefaultMaxReferrers),
+		MaxLineageInputs: intEnv("OSO_MAX_LINEAGE_INPUTS", DefaultMaxLineageInputs),
 	}, nil
 }
 

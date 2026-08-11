@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -98,13 +99,15 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 		InspectedAt:         start,
 		VerificationMessage: "Decoded metadata",
 	}
-	report.TopLevel = s.inspectTarget(ctx, ref, TargetResult{
+	topLevel := TargetResult{
 		Name:      "Top-level image reference",
 		Kind:      oci.KindForMediaType(manifest.MediaType),
 		Digest:    resolvedDigest,
 		MediaType: manifestResp.MediaType,
 		Size:      manifestResp.Size,
-	})
+	}
+	s.populateTargetFromManifest(ctx, ref, &topLevel, manifest)
+	report.TopLevel = s.inspectTarget(ctx, ref, topLevel)
 
 	if manifest.MediaType == oci.MediaOCIIndex || manifest.MediaType == oci.MediaDockerManifestList || len(manifest.Manifests) > 0 {
 		for i, d := range manifest.Manifests {
@@ -115,7 +118,7 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 			if d.Platform == nil || d.Platform.OS == "unknown" || d.Platform.Architecture == "unknown" {
 				continue
 			}
-			report.Platforms = append(report.Platforms, s.inspectTarget(ctx, ref, TargetResult{
+			platform := TargetResult{
 				Name:         oci.PlatformName(d.Platform),
 				Kind:         "Platform manifest",
 				OS:           d.Platform.OS,
@@ -124,13 +127,83 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 				Digest:       d.Digest,
 				MediaType:    d.MediaType,
 				Size:         d.Size,
-			}))
+			}
+			if _, platformManifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, d.Digest); err == nil {
+				s.populateTargetFromManifest(ctx, ref, &platform, platformManifest)
+			} else {
+				platform.Warnings = append(platform.Warnings, "Platform manifest details could not be loaded.")
+			}
+			report.Platforms = append(report.Platforms, s.inspectTarget(ctx, ref, platform))
 		}
+		s.attachIndexAttestations(ctx, ref, report, manifest.Manifests)
 	} else {
 		report.TopLevel.Kind = "Image manifest"
 	}
+	s.discoverLineage(ctx, ref, report)
 	s.logger.Info("inspection completed", "registry", ref.Registry, "repository", ref.Repository, "digest", resolvedDigest, "duration", time.Since(start))
 	return report, nil
+}
+
+func (s *Service) populateTargetFromManifest(ctx context.Context, ref reference.ImageRef, target *TargetResult, manifest oci.Manifest) {
+	if target.MediaType == "" {
+		target.MediaType = manifest.MediaType
+	}
+	target.Annotations = copyStrings(manifest.Annotations)
+	for _, layer := range manifest.Layers {
+		target.Layers = append(target.Layers, LayerDescriptor{Digest: layer.Digest, MediaType: layer.MediaType, Size: layer.Size})
+	}
+	if manifest.Config.Digest == "" || manifest.Config.Size > s.cfg.MaxArtifactBytes {
+		return
+	}
+	raw, err := s.registry.GetBlob(ctx, ref.Registry, ref.Repository, manifest.Config.Digest, s.cfg.MaxArtifactBytes)
+	if err != nil {
+		return
+	}
+	var configDoc struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if json.Unmarshal(raw, &configDoc) == nil {
+		if target.Annotations == nil {
+			target.Annotations = map[string]string{}
+		}
+		for key, value := range configDoc.Config.Labels {
+			target.Annotations[key] = value
+		}
+	}
+}
+
+func (s *Service) attachIndexAttestations(ctx context.Context, ref reference.ImageRef, report *Report, descriptors []oci.Descriptor) {
+	for _, descriptor := range descriptors {
+		if descriptor.Platform == nil || (descriptor.Platform.OS != "unknown" && descriptor.Platform.Architecture != "unknown") {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(descriptor.Annotations["vnd.docker.reference.type"]), "attestation") {
+			continue
+		}
+		targetDigest := descriptor.Annotations["vnd.docker.reference.digest"]
+		for platformIndex := range report.Platforms {
+			if report.Platforms[platformIndex].Digest != targetDigest {
+				continue
+			}
+			artifacts := s.artifactsFromDescriptor(ctx, ref, targetDigest, "Image index attestation manifest", descriptor)
+			for _, artifact := range artifacts {
+				s.addArtifact(&report.Platforms[platformIndex], artifact)
+			}
+		}
+	}
+}
+
+func copyStrings(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copy := make(map[string]string, len(values))
+	for key, value := range values {
+		copy[key] = value
+	}
+	return copy
 }
 
 func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, target TargetResult) TargetResult {
@@ -319,6 +392,7 @@ func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {
 	artifact.DecodedRowsTruncated = views.RowsTruncated
 	artifact.Preview = views.Raw
 	artifact.PreviewTruncated = views.RawTruncated
+	analyzeArtifact(artifact)
 }
 
 func addDescriptorAnnotationDetails(artifact *Artifact, annotations map[string]string) {

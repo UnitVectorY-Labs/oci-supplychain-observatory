@@ -25,11 +25,15 @@ document.addEventListener("htmx:responseError", function () {
 });
 
 document.addEventListener("click", function (event) {
-  var button = event.target.closest("[data-target-tab], [data-artifact-tab]");
+  var button = event.target.closest("[data-target-link], [data-target-tab], [data-artifact-tab]");
   if (!button) {
     return;
   }
   event.preventDefault();
+  if (button.hasAttribute("data-target-link")) {
+    activateTarget(button.getAttribute("data-target-link"));
+    return;
+  }
   var isArtifact = button.hasAttribute("data-artifact-tab");
   var root = button.closest(isArtifact ? "[data-artifact-tabs]" : "[data-target-tabs]");
   if (!root) {
@@ -48,4 +52,29 @@ document.addEventListener("click", function (event) {
     panel.classList.toggle("is-active", active);
     panel.hidden = !active;
   });
+  if (!isArtifact) {
+    document.querySelectorAll("[data-coverage-row]").forEach(function (row) {
+      row.classList.toggle("is-selected", row.getAttribute("data-coverage-row") === target);
+    });
+  }
 });
+
+function activateTarget(target) {
+  var root = document.querySelector("[data-target-tabs]");
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll(":scope > .tab-list [data-target-tab]").forEach(function (tab) {
+    var active = tab.getAttribute("data-target-tab") === target;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  root.querySelectorAll(":scope > [data-target-panel]").forEach(function (panel) {
+    var active = panel.id === target;
+    panel.classList.toggle("is-active", active);
+    panel.hidden = !active;
+  });
+  document.querySelectorAll("[data-coverage-row]").forEach(function (row) {
+    row.classList.toggle("is-selected", row.getAttribute("data-coverage-row") === target);
+  });
+}
