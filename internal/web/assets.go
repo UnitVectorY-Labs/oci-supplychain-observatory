@@ -13,7 +13,6 @@ const assetVersionLength = 12
 var versionedAssetPaths = []string{
 	"/static/css/style.css",
 	"/static/js/script.js",
-	"/static/js/htmx.min.js",
 }
 
 func buildAssetVersions(staticFiles fs.FS, assetPaths []string) (map[string]string, error) {
