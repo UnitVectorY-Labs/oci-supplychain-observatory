@@ -2,9 +2,10 @@ package inspect
 
 import (
 	"fmt"
-	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
 	"strings"
 	"time"
+
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
 )
 
 // DefaultTargetID opens runnable evidence first; index signatures remain one click away.
