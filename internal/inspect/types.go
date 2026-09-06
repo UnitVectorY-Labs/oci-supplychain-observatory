@@ -37,27 +37,28 @@ func (r *Report) DisplayReference() string {
 }
 
 type TargetResult struct {
-	Name          string
-	Kind          string
-	OS            string
-	Architecture  string
-	Variant       string
-	Digest        string
-	MediaType     string
-	Size          int64
-	Signatures    []Artifact
-	Attestations  []Artifact
-	SBOMs         []Artifact
-	ReferrerCount int
-	Warnings      []string
-	Layers        []LayerDescriptor
-	Annotations   map[string]string
-	BuildInputs   []BuildInput
-	Base          *BaseRelationship
+	Name           string
+	Kind           string
+	OS             string
+	Architecture   string
+	Variant        string
+	Digest         string
+	MediaType      string
+	Size           int64
+	Signatures     []Artifact
+	Attestations   []Artifact
+	SBOMs          []Artifact
+	OtherArtifacts []Artifact
+	ReferrerCount  int
+	Warnings       []string
+	Layers         []LayerDescriptor
+	Annotations    map[string]string
+	BuildInputs    []BuildInput
+	Base           *BaseRelationship
 }
 
 func (t TargetResult) ArtifactCount() int {
-	return len(t.Signatures) + len(t.Attestations) + len(t.SBOMs)
+	return len(t.Signatures) + len(t.Attestations) + len(t.SBOMs) + len(t.OtherArtifacts)
 }
 
 func (t TargetResult) SignatureStatus() string {

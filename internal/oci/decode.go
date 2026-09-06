@@ -86,8 +86,12 @@ func ClassifyArtifact(artifactType, mediaType string, annotations map[string]str
 		return "SBOM"
 	case strings.Contains(joined, "attestation") || strings.Contains(joined, "in-toto") || strings.Contains(joined, "intoto") || strings.Contains(joined, "predicate") || strings.Contains(joined, "slsa.dev"):
 		return "Attestation"
-	default:
+	case strings.EqualFold(strings.TrimSpace(mediaType), MediaDSSEEnvelope):
+		return "Attestation"
+	case strings.EqualFold(strings.TrimSpace(mediaType), MediaCosignSimpleSigning) || strings.Contains(joined, "cosign") || strings.Contains(joined, "signature") || strings.Contains(joined, "sigstore"):
 		return "Signature"
+	default:
+		return "Other metadata"
 	}
 }
 
@@ -237,6 +241,13 @@ func SummarizeJSON(raw []byte) ([]KV, []KV, bool) {
 func summarizeNested(payload string) ([]KV, []KV, bool) {
 	if decoded, ok := DecodeBase64JSON(payload); ok {
 		return SummarizeJSON(decoded)
+	}
+	// Some producers put the in-toto statement directly in the envelope rather
+	// than base64 encoding it. Accept both forms so the useful predicate data is
+	// visible regardless of which container builder produced it.
+	trimmed := strings.TrimSpace(payload)
+	if isStructuredJSON([]byte(trimmed)) {
+		return SummarizeJSON([]byte(trimmed))
 	}
 	return nil, nil, false
 }

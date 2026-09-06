@@ -110,14 +110,16 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 	report.TopLevel = s.inspectTarget(ctx, ref, topLevel)
 
 	if manifest.MediaType == oci.MediaOCIIndex || manifest.MediaType == oci.MediaDockerManifestList || len(manifest.Manifests) > 0 {
-		for i, d := range manifest.Manifests {
-			if i >= s.cfg.MaxPlatforms {
-				report.Warnings = append(report.Warnings, fmt.Sprintf("Platform list truncated at %d entries.", s.cfg.MaxPlatforms))
-				break
-			}
+		platformCount := 0
+		for _, d := range manifest.Manifests {
 			if d.Platform == nil || d.Platform.OS == "unknown" || d.Platform.Architecture == "unknown" {
 				continue
 			}
+			if platformCount >= s.cfg.MaxPlatforms {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("Platform list truncated at %d entries.", s.cfg.MaxPlatforms))
+				break
+			}
+			platformCount++
 			platform := TargetResult{
 				Name:         oci.PlatformName(d.Platform),
 				Kind:         "Platform manifest",
@@ -160,11 +162,23 @@ func (s *Service) populateTargetFromManifest(ctx context.Context, ref reference.
 		return
 	}
 	var configDoc struct {
-		Config struct {
+		OS           string `json:"os"`
+		Architecture string `json:"architecture"`
+		Variant      string `json:"variant"`
+		Config       struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"config"`
 	}
 	if json.Unmarshal(raw, &configDoc) == nil {
+		if target.OS == "" {
+			target.OS = configDoc.OS
+		}
+		if target.Architecture == "" {
+			target.Architecture = configDoc.Architecture
+		}
+		if target.Variant == "" {
+			target.Variant = configDoc.Variant
+		}
 		if target.Annotations == nil {
 			target.Annotations = map[string]string{}
 		}
@@ -175,14 +189,31 @@ func (s *Service) populateTargetFromManifest(ctx context.Context, ref reference.
 }
 
 func (s *Service) attachIndexAttestations(ctx context.Context, ref reference.ImageRef, report *Report, descriptors []oci.Descriptor) {
+	seen := 0
 	for _, descriptor := range descriptors {
+		if seen >= s.cfg.MaxReferrers {
+			report.Warnings = append(report.Warnings, fmt.Sprintf("Index attestation list truncated at %d entries.", s.cfg.MaxReferrers))
+			break
+		}
 		if descriptor.Platform == nil || (descriptor.Platform.OS != "unknown" && descriptor.Platform.Architecture != "unknown") {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(descriptor.Annotations["vnd.docker.reference.type"]), "attestation") {
+		seen++
+		if !strings.Contains(strings.ToLower(annotationValue(descriptor.Annotations, "vnd.docker.reference.type")), "attestation") {
 			continue
 		}
-		targetDigest := descriptor.Annotations["vnd.docker.reference.digest"]
+		targetDigest := annotationValue(descriptor.Annotations, "vnd.docker.reference.digest")
+		// BuildKit normally records the target digest as an annotation, while
+		// other builders put it on the attestation manifest's subject. Resolve
+		// the latter so platform evidence follows the platform it describes.
+		if targetDigest == "" {
+			if _, attestationManifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, descriptor.Digest); err == nil && attestationManifest.Subject != nil {
+				targetDigest = attestationManifest.Subject.Digest
+			}
+		}
+		if targetDigest == "" {
+			continue
+		}
 		for platformIndex := range report.Platforms {
 			if report.Platforms[platformIndex].Digest != targetDigest {
 				continue
@@ -193,6 +224,15 @@ func (s *Service) attachIndexAttestations(ctx context.Context, ref reference.Ima
 			}
 		}
 	}
+}
+
+func annotationValue(annotations map[string]string, key string) string {
+	for name, value := range annotations {
+		if strings.EqualFold(name, key) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func copyStrings(values map[string]string) map[string]string {
@@ -224,7 +264,7 @@ func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, tar
 		resp, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, tag)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, oci.ErrAuthenticationNeeded) {
-				target.Warnings = append(target.Warnings, fmt.Sprintf("Legacy Cosign %s lookup failed: %v", legacy.suffix, err))
+				target.Warnings = append(target.Warnings, fmt.Sprintf("Legacy Cosign %s metadata could not be loaded.", legacy.suffix))
 			}
 			continue
 		}
@@ -248,10 +288,10 @@ func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, tar
 
 func (s *Service) inspectCosignAttachmentIndex(ctx context.Context, ref reference.ImageRef, target *TargetResult) {
 	tag := oci.LegacyCosignTag(target.Digest, "")
-	resp, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, tag)
+	_, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, tag)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, oci.ErrAuthenticationNeeded) {
-			target.Warnings = append(target.Warnings, fmt.Sprintf("Cosign attachment index lookup failed: %v", err))
+			target.Warnings = append(target.Warnings, "Cosign attachment index metadata could not be loaded.")
 		}
 		return
 	}
@@ -259,24 +299,25 @@ func (s *Service) inspectCosignAttachmentIndex(ctx context.Context, ref referenc
 		return
 	}
 	seen := map[string]bool{}
-	for _, existing := range append(append(target.Signatures, target.Attestations...), target.SBOMs...) {
+	for _, existing := range append(append(append(target.Signatures, target.Attestations...), target.SBOMs...), target.OtherArtifacts...) {
 		seen[existing.Digest] = true
 	}
-	discovered := 0
+	candidates := 0
 	for _, desc := range manifest.Manifests {
 		if desc.Platform != nil {
 			continue
 		}
+		if candidates >= s.cfg.MaxReferrers {
+			target.Warnings = append(target.Warnings, fmt.Sprintf("Cosign attachment list truncated at %d entries.", s.cfg.MaxReferrers))
+			break
+		}
+		candidates++
 		if seen[desc.Digest] {
 			continue
 		}
 		for _, artifact := range s.artifactsFromDescriptor(ctx, ref, target.Digest, "Cosign attachment index tag "+tag, desc) {
 			s.addArtifact(target, artifact)
-			discovered++
 		}
-	}
-	if discovered > 0 {
-		target.Warnings = append(target.Warnings, fmt.Sprintf("Discovered Cosign attachment index %s (%s).", tag, oci.ValueOr(resp.Digest, "digest unavailable")))
 	}
 }
 
@@ -299,7 +340,8 @@ func (s *Service) artifactsFromDescriptor(ctx context.Context, ref reference.Ima
 	}
 	resp, manifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, desc.Digest)
 	if err != nil {
-		artifact.Error = "Could not fetch artifact manifest: " + err.Error()
+		s.logger.Warn("artifact manifest fetch failed", "registry", ref.Registry, "repository", ref.Repository, "digest", desc.Digest, "error", err)
+		artifact.Error = "Could not fetch artifact manifest."
 		s.registerArtifact(&artifact)
 		return []Artifact{artifact}
 	}
@@ -361,7 +403,8 @@ func (s *Service) artifactsFromManifestLayers(ctx context.Context, ref reference
 		}
 		raw, err := s.registry.GetBlob(ctx, ref.Registry, ref.Repository, layer.Digest, s.cfg.MaxArtifactBytes)
 		if err != nil {
-			artifact.Error = "Could not fetch artifact layer: " + err.Error()
+			s.logger.Warn("artifact layer fetch failed", "registry", ref.Registry, "repository", ref.Repository, "digest", layer.Digest, "error", err)
+			artifact.Error = "Could not fetch artifact layer."
 			artifacts = append(artifacts, artifact)
 			continue
 		}
@@ -393,6 +436,7 @@ func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {
 	artifact.Preview = views.Raw
 	artifact.PreviewTruncated = views.RawTruncated
 	analyzeArtifact(artifact)
+	artifact.VerificationStatus = "Not verified"
 }
 
 func addDescriptorAnnotationDetails(artifact *Artifact, annotations map[string]string) {
@@ -420,12 +464,29 @@ func (s *Service) registerArtifact(artifact *Artifact) {
 }
 
 func (s *Service) addArtifact(target *TargetResult, artifact Artifact) {
+	if artifact.Digest != "" {
+		for _, existing := range targetArtifacts(*target) {
+			if existing.Digest == artifact.Digest && existing.TargetDigest == artifact.TargetDigest {
+				return
+			}
+		}
+	}
 	switch {
 	case strings.Contains(strings.ToLower(artifact.Type), "sbom"):
 		target.SBOMs = append(target.SBOMs, artifact)
 	case strings.Contains(strings.ToLower(artifact.Type), "attestation"):
 		target.Attestations = append(target.Attestations, artifact)
+	case strings.Contains(strings.ToLower(artifact.Type), "other"):
+		target.OtherArtifacts = append(target.OtherArtifacts, artifact)
 	default:
 		target.Signatures = append(target.Signatures, artifact)
 	}
+}
+
+func targetArtifacts(target TargetResult) []Artifact {
+	all := make([]Artifact, 0, target.ArtifactCount())
+	all = append(all, target.Signatures...)
+	all = append(all, target.Attestations...)
+	all = append(all, target.SBOMs...)
+	return append(all, target.OtherArtifacts...)
 }

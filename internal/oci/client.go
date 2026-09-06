@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -70,7 +71,8 @@ func (c *Client) GetManifest(ctx context.Context, registry, repository, referenc
 func (c *Client) GetReferrers(ctx context.Context, registry, repository, digest string, limit int) ([]Descriptor, []string) {
 	resp, err := c.registryRequest(ctx, http.MethodGet, registry, "/v2/"+repository+"/referrers/"+digest, MediaOCIIndex+", "+MediaDockerManifestList, 20<<20)
 	if err != nil {
-		return nil, []string{"OCI referrer lookup failed: " + err.Error()}
+		slog.Warn("OCI referrer lookup failed", "registry", registry, "repository", repository, "error", err)
+		return nil, []string{"OCI referrer lookup could not be completed. Evidence may be incomplete."}
 	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, nil

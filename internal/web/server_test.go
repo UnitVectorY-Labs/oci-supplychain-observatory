@@ -82,3 +82,60 @@ func newTestServer(t *testing.T) *Server {
 	}
 	return server
 }
+
+func TestReportOpensPlatformEvidenceAndDefersPayload(t *testing.T) {
+	server := newTestServer(t)
+	report := &inspect.Report{
+		Registry: "ghcr.io", Repository: "example/app", ResolvedDigest: "sha256:abc",
+		TopLevel:  inspect.TargetResult{Kind: "Image index"},
+		Platforms: []inspect.TargetResult{{Name: "linux/arm64", Kind: "Platform manifest", OS: "linux", Architecture: "arm64", SBOMs: []inspect.Artifact{{ID: "test-artifact", Purpose: "SPDX SBOM", RawView: "raw-payload-sentinel", Downloadable: true, DecodedViewJSON: true}}}},
+	}
+	var rendered bytes.Buffer
+	if err := server.templates.ExecuteTemplate(&rendered, "result-panel.html", ResultData{Report: report}); err != nil {
+		t.Fatal(err)
+	}
+	html := rendered.String()
+	for _, want := range []string{`data-default-target="target-platform-0"`, `aria-pressed="true">linux/arm64`, `/artifacts/test-artifact/view`, `Not verified`, `No policy trust evaluated`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Contains(html, "raw-payload-sentinel") {
+		t.Error("initial report includes deferred raw payload")
+	}
+	if strings.Contains(html, "Found and parsed") {
+		t.Error("report claims all artifacts were parsed")
+	}
+}
+
+func TestArtifactPayloadEscapesRegistryContent(t *testing.T) {
+	server := newTestServer(t)
+	var rendered bytes.Buffer
+	artifact := &inspect.Artifact{RawView: `<script>alert("registry")</script>`}
+	if err := server.templates.ExecuteTemplate(&rendered, "payload-view", artifact); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered.String(), `<script>alert`) || !strings.Contains(rendered.String(), `&lt;script&gt;`) {
+		t.Fatal("payload must be escaped")
+	}
+}
+
+func TestInvalidNavigationRendersFullPage(t *testing.T) {
+	server := newTestServer(t)
+	recorder := httptest.NewRecorder()
+	server.handleInspect(recorder, httptest.NewRequest(http.MethodGet, "/inspect?image=not-allowed.example/repo:tag", nil))
+	if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "<!doctype html>") {
+		t.Fatalf("expected complete error page, status=%d", recorder.Code)
+	}
+}
+
+func TestUnknownArtifactViewReturnsNotFound(t *testing.T) {
+	server := newTestServer(t)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/artifacts/missing/view", nil)
+	request.SetPathValue("id", "missing")
+	server.handleArtifactView(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d", recorder.Code)
+	}
+}

@@ -33,3 +33,7 @@ Environment variables:
 - `OSO_MAX_LINEAGE_INPUTS`: maximum provenance image dependencies examined for base-layer lineage per platform, default `10`.
 
 The legacy prototype variable name `CTI_HTTP_ADDR` is also accepted for migration convenience.
+
+The approved registry list also drives the search form's registry buttons. The UI does not add exceptions to the configured allow-list. `OSO_MAX_PLATFORMS` counts runnable platform descriptors, excluding BuildKit attestation entries. `OSO_MAX_REFERRERS` also bounds index-attestation and Cosign attachment candidates. `OSO_MAX_LINEAGE_INPUTS` applies to each inspected scope, including a directly referenced image manifest. Existing timeouts and artifact byte limits are unchanged.
+
+Package inventories render the first 200 entries; filtering searches that displayed subset. CycloneDX nested component counting is capped at 10,000 entries and reports a lower bound at the ceiling. Complete published metadata remains available through raw downloads. Raw/decoded payload HTML is loaded only when requested and still observes `OSO_MAX_PREVIEW_BYTES`.

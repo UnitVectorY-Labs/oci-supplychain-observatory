@@ -1,50 +1,31 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OCI Supply Chain Observatory</title>
-  <meta name="description" content="Inspect public OCI image signatures, attestations, provenance, and SBOM metadata.">
+  <meta name="description" content="Explore the platforms, build origins, signatures and software inventory of a public container image.">
   <link rel="stylesheet" href="{{assetURL "/static/css/style.css"}}">
   {{template "head-scripts" .}}
 </head>
 <body>
-  <div class="page-shell">
-    <main class="search-main" id="app">
-      <section class="search-panel" aria-labelledby="search-title">
-        <h1 id="search-title" class="brand-mark">
-          {{template "icon-shield-search"}}
-          OCI Supply Chain Observatory
-        </h1>
-        <p class="search-copy">Enter a public container image reference to inspect registry-published signatures, attestations, provenance, and SBOM metadata without pulling image layers.</p>
-        <form method="post" action="/inspect" class="inspect-form" hx-post="/inspect" hx-target="body" hx-swap="innerHTML" hx-indicator="#loading">
-          <input class="image-input" type="text" name="image" placeholder="ghcr.io/unitvectory-labs/iapheaders:v0.5.1" maxlength="512" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
-          <button type="submit" class="btn-primary">
-            {{template "icon-search"}}
-            <span>Inspect</span>
-          </button>
-        </form>
-        <p class="meta-note">Public anonymous registry access only. Allowed registries:</p>
-        <ul class="registry-list">
-          {{range .Allowed}}
-          <li>{{.}}</li>
-          {{end}}
-        </ul>
-      </section>
-    </main>
-    <footer class="footer">
-      <p>
-        <a href="https://github.com/UnitVectorY-Labs" class="link-accent">UnitVectorY Labs</a> |
-        <a href="https://opensource.org/licenses/MIT" class="link-accent">MIT License</a> |
-        <a href="https://github.com/UnitVectorY-Labs/oci-supplychain-observatory" class="link-accent"><strong>oci-supplychain-observatory</strong> on GitHub</a>
-      </p>
-    </footer>
-  </div>
-  <div id="loading" class="htmx-indicator loading-card" aria-live="polite" aria-label="Inspecting image metadata">
-    <div class="loading-content">
-      <div class="loading-spinner"></div>
-      <p>Inspecting registry metadata...</p>
-    </div>
-  </div>
+<div class="page-shell">
+  {{template "header"}}
+  <main class="search-main" id="app">
+    <section class="search-panel" aria-labelledby="search-title">
+      <p class="eyebrow">Look inside the supply chain</p>
+      <h1 id="search-title">One image.<br>Every platform. <span class="muted-heading">A clearer picture.</span></h1>
+      <p class="search-copy">Understand what’s inside a container, where it came from, and what evidence its publisher provides.</p>
+      {{template "search-form"}}
+      <p class="input-hint">Paste a public image reference. Include a registry, repository, and tag or digest.<br>Docker Hub shorthand is supported; omitted tags resolve to <code>latest</code>.</p>
+      <div class="intro-grid">
+        <article><span class="step-number">01</span><h2>Follow the build</h2><p>Trace published build inputs and distinguish declared bases from matching layer stacks.</p></article>
+        <article><span class="step-number">02</span><h2>Compare platforms</h2><p>Move between architectures and see exactly which digest each piece of evidence belongs to.</p></article>
+        <article><span class="step-number">03</span><h2>Read the evidence</h2><p>Explore packages, provenance, and signing claims. Keep the original metadata within reach.</p></article>
+      </div>
+    </section>
+  </main>
+  {{template "footer"}}
+</div>
 </body>
 </html>
