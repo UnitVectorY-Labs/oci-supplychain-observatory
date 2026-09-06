@@ -30,6 +30,29 @@ func TestSummarizeJSONDetectsCycloneDX(t *testing.T) {
 	}
 }
 
+func TestClassifyArtifactDoesNotAssumeUnknownJSONIsSignature(t *testing.T) {
+	if got := ClassifyArtifact("", "application/json", map[string]string{"title": "build metadata"}); got != "Other metadata" {
+		t.Fatalf("classification = %q, want Other metadata", got)
+	}
+	if got := ClassifyArtifact("", MediaDSSEEnvelope, nil); got != "Attestation" {
+		t.Fatalf("DSSE classification = %q, want Attestation", got)
+	}
+}
+
+func TestSummarizeJSONDecodesDirectJSONNestedPayload(t *testing.T) {
+	raw := []byte(`{"payload":"{\"predicateType\":\"https://slsa.dev/provenance/v1\",\"predicate\":{\"buildDefinition\":{\"buildType\":\"example\"}}}"}`)
+	summary, _, _ := SummarizeJSON(raw)
+	var found bool
+	for _, item := range summary {
+		if item.Key == "Predicate type" && item.Value == "https://slsa.dev/provenance/v1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("nested direct JSON was not summarized: %#v", summary)
+	}
+}
+
 func TestBuildPayloadViewsExpandsBase64JSONFields(t *testing.T) {
 	raw := []byte(`{"payload":"eyJzdWJqZWN0IjpbeyJuYW1lIjoiaW1hZ2UiLCJkaWdlc3QiOnsic2hhMjU2IjoiYWJjIn19XX0="}`)
 	views := BuildPayloadViews(raw, 4096)

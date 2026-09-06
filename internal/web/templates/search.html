@@ -1,0 +1,21 @@
+{{define "search-form"}}
+<form method="get" action="/inspect" class="inspect-form" hx-get="/inspect" hx-target="body" hx-swap="innerHTML" hx-push-url="true">
+  <label class="sr-only" for="image-reference">Container image reference</label>
+  <input id="image-reference" class="image-input" type="text" name="image" value="{{.}}" placeholder="registry / repository : tag or @digest" maxlength="512" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="registry-help">
+  <button type="submit" class="btn-primary">{{template "icon-search"}}<span>Inspect image</span></button>
+</form>
+<div id="registry-help" class="registry-help">
+  <span>Approved registries</span>
+  <div class="registry-list">{{range registries}}<button type="button" class="registry-option" data-registry="{{.}}">{{.}}</button>{{end}}</div>
+</div>
+{{end}}
+{{define "theme-toggle"}}<button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch to light mode">Light mode</button>{{end}}
+{{define "header"}}
+<header class="app-header"><div class="app-header-inner">
+  <a class="app-brand" href="/">{{template "icon-shield-search"}}<span>Supply Chain <span class="brand-secondary">Observatory</span></span></a>
+  {{template "theme-toggle"}}
+</div></header>
+{{end}}
+{{define "footer"}}
+<footer class="footer"><span>Registry metadata only. No image layers downloaded.</span><a href="https://github.com/UnitVectorY-Labs/oci-supplychain-observatory">Source on GitHub ↗</a></footer>
+{{end}}

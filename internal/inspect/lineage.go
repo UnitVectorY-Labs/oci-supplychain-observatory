@@ -22,21 +22,40 @@ func (s *Service) discoverLineage(ctx context.Context, imageRef reference.ImageR
 		limit = 10
 	}
 	aggregated := map[string]*BuildInput{}
+	// A single-platform image has no entries in report.Platforms, so include the
+	// top-level manifest explicitly. Index-level provenance is useful as well;
+	// aggregation below keeps the report-level list free of duplicates.
+	targets := make([]*TargetResult, 0, len(report.Platforms)+1)
+	targets = append(targets, &report.TopLevel)
 	for platformIndex := range report.Platforms {
-		platform := &report.Platforms[platformIndex]
+		targets = append(targets, &report.Platforms[platformIndex])
+	}
+	for _, platform := range targets {
+		scope := platform.Name
+		if platform == &report.TopLevel && len(report.Platforms) == 0 {
+			scope = ""
+		}
+		if scope == "" && platform.OS != "" && platform.Architecture != "" {
+			scope = platform.OS + "/" + platform.Architecture
+			if platform.Variant != "" {
+				scope += "/" + platform.Variant
+			}
+		} else if scope == "" {
+			scope = "image manifest"
+		}
 		dependencies := platformDependencies(*platform)
 		if len(dependencies) > limit {
 			dependencies = dependencies[:limit]
 			platform.Warnings = append(platform.Warnings, fmt.Sprintf("Build input lineage truncated at %d entries.", limit))
 		}
 		for _, dependency := range dependencies {
-			input, ok := s.buildInputFromDependency(dependency, platform.Name)
+			input, ok := s.buildInputFromDependency(dependency, scope)
 			if !ok {
 				continue
 			}
-			input.Role = "Builder image"
+			input.Role = "Build input"
 			input.Evidence = []string{"Build provenance"}
-			if input.Inspectable {
+			if input.Inspectable && len(platform.Layers) > 0 {
 				if layers, ok := s.platformLayers(ctx, input, *platform); ok && exactLayerPrefix(platform.Layers, layers) {
 					input.Role = "Runtime base"
 					input.SharedLayers = len(layers)
@@ -44,7 +63,9 @@ func (s *Service) discoverLineage(ctx context.Context, imageRef reference.ImageR
 					input.AddedLayerCount = len(platform.Layers) - len(layers)
 					input.Evidence = append(input.Evidence, "Exact layer prefix")
 					base := input
-					platform.Base = &BaseRelationship{BuildInput: base}
+					if platform.Base == nil || base.SharedLayers > platform.Base.SharedLayers {
+						platform.Base = &BaseRelationship{BuildInput: base}
+					}
 				}
 			}
 			platform.BuildInputs = append(platform.BuildInputs, input)
@@ -66,7 +87,7 @@ func (s *Service) discoverLineage(ctx context.Context, imageRef reference.ImageR
 	}
 	sort.Slice(report.BuildInputs, func(i, j int) bool {
 		if report.BuildInputs[i].Role != report.BuildInputs[j].Role {
-			return report.BuildInputs[i].Role == "Builder image"
+			return report.BuildInputs[i].Role == "Build input"
 		}
 		return report.BuildInputs[i].Reference < report.BuildInputs[j].Reference
 	})
@@ -124,6 +145,17 @@ func (s *Service) buildInputFromDependency(dependency provenanceDependency, plat
 	if !ok {
 		return BuildInput{}, false
 	}
+	// PURLs commonly carry the immutable version in the @ component. The
+	// provenance digest is the authoritative image digest, so don't show a
+	// digest as though it were a human-readable tag.
+	if dependency.Digest == "" && strings.HasPrefix(tag, "sha256:") {
+		if _, err := reference.Parse(name+"@"+tag, reference.Config{AllowedRegistry: s.cfg.AllowedRegistry}); err == nil {
+			dependency.Digest = tag
+		}
+	}
+	if strings.HasPrefix(tag, "sha256:") {
+		tag = ""
+	}
 	displayRef := name
 	if tag != "" {
 		displayRef += ":" + tag
@@ -154,7 +186,7 @@ func parseImagePURL(value string) (string, string, bool) {
 		return "", "", false
 	}
 	path := strings.TrimPrefix(value, prefix)
-	path, _, _ = strings.Cut(path, "?")
+	path, query, _ := strings.Cut(path, "?")
 	decoded, err := url.PathUnescape(path)
 	if err != nil {
 		return "", "", false
@@ -163,10 +195,56 @@ func parseImagePURL(value string) (string, string, bool) {
 	if at := strings.LastIndex(decoded, "@"); at >= 0 {
 		name, tag = decoded[:at], decoded[at+1:]
 	}
+	// OCI pURLs may use a relative package path and put the actual registry
+	// repository in repository_url. Prefer that qualifier when it identifies a
+	// concrete host, otherwise retain the package path.
+	if values, err := url.ParseQuery(query); err == nil {
+		if repositoryURL := values.Get("repository_url"); repositoryURL != "" {
+			if qualified, ok := repositoryName(repositoryURL); ok {
+				name = qualified
+			} else {
+				return "", "", false
+			}
+		}
+	}
 	if name == "" {
 		return "", "", false
 	}
 	return name, tag, true
+}
+
+func repositoryName(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", false
+	}
+	if parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || (parsed.Scheme != "" && parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", false
+	}
+	if parsed.Scheme == "" && strings.Contains(value, "://") {
+		return "", false
+	}
+	host := parsed.Host
+	path := parsed.Path
+	if host == "" {
+		// Qualifiers are also seen without a scheme (registry.example/org/img).
+		parts := strings.SplitN(strings.TrimPrefix(value, "//"), "/", 2)
+		host = parts[0]
+		if len(parts) == 2 {
+			path = "/" + parts[1]
+		}
+	}
+	if host == "" || strings.ContainsAny(host, " \t\r\n") {
+		return "", false
+	}
+	path = strings.Trim(path, "/")
+	path = strings.TrimPrefix(path, "v2/")
+	path = strings.TrimPrefix(path, "v1/")
+	if path == "" {
+		return "", false
+	}
+	return host + "/" + path, true
 }
 
 func (s *Service) platformLayers(ctx context.Context, input BuildInput, target TargetResult) ([]LayerDescriptor, bool) {
@@ -192,14 +270,33 @@ func (s *Service) platformLayers(ctx context.Context, input BuildInput, target T
 }
 
 func matchingPlatform(descriptors []oci.Descriptor, target TargetResult) (oci.Descriptor, bool) {
+	var fallback oci.Descriptor
+	fallbackCount := 0
 	for _, descriptor := range descriptors {
 		if descriptor.Platform == nil {
 			continue
 		}
-		if descriptor.Platform.OS == target.OS && descriptor.Platform.Architecture == target.Architecture &&
-			(target.Variant == "" || descriptor.Platform.Variant == "" || descriptor.Platform.Variant == target.Variant) {
+		if descriptor.Platform.OS != target.OS || descriptor.Platform.Architecture != target.Architecture {
+			continue
+		}
+		if descriptor.Platform.Variant == target.Variant {
 			return descriptor, true
 		}
+		if target.Variant == "" && fallback.Digest == "" {
+			// The target omitted a variant; retain the historical permissive
+			// behavior while still preferring an exact variant above.
+			fallback = descriptor
+			fallbackCount = 1
+		} else if target.Variant == "" && descriptor.Platform.Variant != "" {
+			fallbackCount++
+		}
+		if target.Variant != "" && descriptor.Platform.Variant == "" {
+			fallback = descriptor
+			fallbackCount++
+		}
+	}
+	if fallback.Digest != "" && fallbackCount == 1 {
+		return fallback, true
 	}
 	return oci.Descriptor{}, false
 }
@@ -239,6 +336,15 @@ func (s *Service) declaredBase(platform TargetResult) (BuildInput, bool) {
 			input.Canonical = canonical
 			input.Inspectable = true
 		}
+	} else if err == nil && parsed.Digest != "" {
+		// Some producers put the digest in the annotation name and omit the
+		// separate base.digest annotation. Preserve that immutable link.
+		input.Registry = parsed.Registry
+		input.Repository = parsed.Repository
+		input.Tag = parsed.Tag
+		input.Digest = parsed.Digest
+		input.Canonical = parsed.Registry + "/" + parsed.Repository + "@" + parsed.Digest
+		input.Inspectable = true
 	}
 	return input, true
 }

@@ -46,9 +46,12 @@ func New(cfg config.Config, inspector *inspect.Service, logger *slog.Logger) (*S
 		return nil, err
 	}
 	funcs := template.FuncMap{
-		"assetURL":   func(path string) string { return assetURL(path, assetVersions) },
-		"join":       strings.Join,
-		"inspectURL": func(image string) string { return "/inspect?image=" + url.QueryEscape(image) },
+		"registries":  func() []string { return cfg.AllowedList },
+		"bytes":       formatBytes,
+		"shortDigest": shortDigest,
+		"assetURL":    func(path string) string { return assetURL(path, assetVersions) },
+		"join":        strings.Join,
+		"inspectURL":  func(image string) string { return "/inspect?image=" + url.QueryEscape(image) },
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -69,6 +72,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST /inspect", s.wrapWithOriginCheck(s.handleInspect))
 	mux.HandleFunc("GET /inspect/jobs/{id}", s.handleInspectJob)
 	mux.HandleFunc("GET /artifacts/{id}/download", s.handleArtifactDownload)
+	mux.HandleFunc("GET /artifacts/{id}/view", s.handleArtifactView)
 	mux.HandleFunc("GET /healthz", textHandler("ok"))
 	mux.HandleFunc("GET /readyz", textHandler("ready"))
 
@@ -95,6 +99,7 @@ type IndexData struct {
 }
 
 type ResultData struct {
+	Input   string
 	Report  *inspect.Report
 	Error   *ErrorData
 	Loading *LoadingData
@@ -172,11 +177,28 @@ func (s *Server) handleInspectJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderResultError(w http.ResponseWriter, r *http.Request, title, message string, status int) {
-	data := ResultData{Error: &ErrorData{Title: title, Message: message}}
+	data := ResultData{Input: r.FormValue("image"), Error: &ErrorData{Title: title, Message: message}}
 	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
 		status = http.StatusOK
 	}
-	s.render(w, status, "results.html", data)
+	name := "page-results.html"
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		name = "results.html"
+	}
+	s.render(w, status, name, data)
+}
+
+func (s *Server) handleArtifactView(w http.ResponseWriter, r *http.Request) {
+	artifact, ok := s.inspector.Artifact(r.PathValue("id"))
+	if !ok || artifact == nil || !artifact.Downloadable {
+		http.NotFound(w, r)
+		return
+	}
+	name := "page-artifact.html"
+	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		name = "payload-view"
+	}
+	s.render(w, http.StatusOK, name, artifact)
 }
 
 func (s *Server) handleArtifactDownload(w http.ResponseWriter, r *http.Request) {
@@ -301,4 +323,31 @@ func randomID() string {
 		return hex.EncodeToString([]byte(fmt.Sprintf("%p", &b)))
 	}
 	return hex.EncodeToString(b[:])
+}
+
+func formatBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	}
+	return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+}
+
+func shortDigest(value string) string {
+	if len(value) > 23 {
+		return value[:19] + "…" + value[len(value)-4:]
+	}
+	return value
+}
+
+func (d ResultData) SearchInput() string {
+	if d.Loading != nil {
+		return d.Loading.Input
+	}
+	if d.Report != nil {
+		return d.Report.DisplayReference()
+	}
+	return d.Input
 }

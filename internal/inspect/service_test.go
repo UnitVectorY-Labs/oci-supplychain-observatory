@@ -138,6 +138,25 @@ func TestInspectAttachesIndexAttestationToPlatformAndFindsBuildInput(t *testing.
 	}
 }
 
+func TestInspectReadsPlatformFromSingleManifestConfig(t *testing.T) {
+	registry := fakeRegistryForImage("gcr.io", "example/single").withMainManifest()
+	configDigest := registry.addBlob("config", []byte(`{"os":"linux","architecture":"arm64","variant":"v8","config":{"Labels":{"org.example.source":"build"}}}`))
+	manifest := registry.manifests["nonroot"]
+	manifest.manifest.Config = oci.Descriptor{Digest: configDigest, Size: int64(len(registry.blobs[configDigest]))}
+	registry.manifests["nonroot"] = manifest
+	service := NewService(testConfig(), registry, cache.NewMemory[*Report](), nil)
+	report, err := service.Inspect(context.Background(), "gcr.io/example/single:nonroot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TopLevel.OS != "linux" || report.TopLevel.Architecture != "arm64" || report.TopLevel.Variant != "v8" {
+		t.Fatalf("platform = %s/%s/%s", report.TopLevel.OS, report.TopLevel.Architecture, report.TopLevel.Variant)
+	}
+	if report.TopLevel.Annotations["org.example.source"] != "build" {
+		t.Fatalf("config labels missing: %#v", report.TopLevel.Annotations)
+	}
+}
+
 func TestExactLayerPrefix(t *testing.T) {
 	base := []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:b"}}
 	target := []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:b"}, {Digest: "sha256:c"}}
@@ -146,6 +165,17 @@ func TestExactLayerPrefix(t *testing.T) {
 	}
 	if exactLayerPrefix(target, []LayerDescriptor{{Digest: "sha256:a"}, {Digest: "sha256:x"}}) {
 		t.Fatal("unexpected prefix match")
+	}
+}
+
+func TestAddArtifactDeduplicatesDigestForTarget(t *testing.T) {
+	service := NewService(testConfig(), nil, nil, nil)
+	target := TargetResult{Digest: testDigest}
+	artifact := Artifact{Type: "Signature", Digest: "sha256:metadata", TargetDigest: testDigest}
+	service.addArtifact(&target, artifact)
+	service.addArtifact(&target, artifact)
+	if len(target.Signatures) != 1 {
+		t.Fatalf("signatures = %d, want 1", len(target.Signatures))
 	}
 }
 
@@ -210,7 +240,7 @@ func (r *fakeRegistry) withEmbeddedBuildkitAttestation() *fakeRegistry {
 	}
 	r.manifests[attestationDigest] = fakeManifest{
 		resp: response(attestationDigest, oci.MediaOCIManifest),
-		manifest: oci.Manifest{MediaType: oci.MediaOCIManifest, Layers: []oci.Descriptor{{
+		manifest: oci.Manifest{MediaType: oci.MediaOCIManifest, Subject: &oci.Descriptor{Digest: platformDigest}, Layers: []oci.Descriptor{{
 			MediaType: "application/vnd.in-toto+json",
 			Digest:    provenanceDigest,
 			Size:      int64(len(provenance)),
@@ -221,13 +251,10 @@ func (r *fakeRegistry) withEmbeddedBuildkitAttestation() *fakeRegistry {
 	}
 	main := r.manifests["latest"]
 	main.manifest.Manifests = append(main.manifest.Manifests, oci.Descriptor{
-		MediaType: oci.MediaOCIManifest,
-		Digest:    attestationDigest,
-		Platform:  &oci.Platform{OS: "unknown", Architecture: "unknown"},
-		Annotations: map[string]string{
-			"vnd.docker.reference.type":   "attestation-manifest",
-			"vnd.docker.reference.digest": platformDigest,
-		},
+		MediaType:   oci.MediaOCIManifest,
+		Digest:      attestationDigest,
+		Platform:    &oci.Platform{OS: "unknown", Architecture: "unknown"},
+		Annotations: map[string]string{"vnd.docker.reference.type": "attestation-manifest"},
 	})
 	r.manifests["latest"] = main
 	r.manifests["v3.0.2"] = main

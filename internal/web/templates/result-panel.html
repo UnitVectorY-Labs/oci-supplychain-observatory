@@ -15,25 +15,78 @@
 </section>
 {{else}}
 {{with .Report}}
-<section id="inspection-panel">
+{{$default := .DefaultTargetID}}
+{{$other := .HasOtherMetadata}}
+<section id="inspection-panel" data-default-target="{{$default}}">
   <section class="report-overview" aria-label="Inspection metadata">
     <div>
       <p class="eyebrow">Resolved image</p>
-      <p class="report-reference mono">{{.Canonical}}</p>
+      <p class="report-reference">{{.Registry}} / {{.Repository}}</p><details class="digest-disclosure"><summary class="mono">{{shortDigest .ResolvedDigest}}</summary><p class="mono digest-value">{{.Canonical}}</p><button type="button" class="text-button" data-copy="{{.Canonical}}">Copy immutable reference</button></details>
     </div>
     <dl class="overview-facts">
-      <div><dt>Platforms</dt><dd>{{len .Platforms}}</dd></div>
+      <div><dt>Platforms</dt><dd>{{.PlatformCount}}</dd></div>
       <div><dt>Artifacts</dt><dd>{{.ArtifactCount}}</dd></div>
       <div><dt>Build inputs</dt><dd>{{len .BuildInputs}}</dd></div>
     </dl>
   </section>
 
+  <p class="report-context">{{if .FromCache}}Cached inspection{{else}}Inspected{{end}} {{.InspectedAt.UTC.Format "02 Jan 2006 · 15:04 UTC"}} · Tags resolved to immutable digests.</p>
+  <p class="trust-note"><strong>Evidence, not a trust verdict.</strong> Published metadata is decoded for inspection. Signatures and attestations are not cryptographically verified or evaluated against a trust policy.</p>
   {{if .Warnings}}
   <div class="status-row">{{range .Warnings}}<span class="chip warn">{{.}}</span>{{end}}</div>
   {{end}}
 
+  <section class="report-section" aria-labelledby="coverage-title">
+    <div class="report-section-head">
+      <div>
+        <p class="eyebrow">Evidence coverage</p>
+        <h2 id="coverage-title">Choose a platform. Follow its evidence.</h2>
+      </div>
+      <p class="support-note">Index evidence covers the image collection; platform evidence describes one variant.</p>
+    </div>
+    <div class="coverage-table-wrap">
+      <table class="coverage-table">
+        <thead><tr><th>Scope</th><th>Signatures</th><th>Attestations</th><th>SBOM</th>{{if $other}}<th>Other</th>{{end}}<th>Lineage</th></tr></thead>
+        <tbody>
+          <tr class="{{if eq $default "target-top"}}is-selected{{end}}" data-coverage-row="target-top">
+            <td><button type="button" class="scope-link" data-target-link="target-top" aria-pressed="{{eq $default "target-top"}}">{{.TopLevel.ScopeLabel}}</button></td>
+            <td><span class="chip {{if .TopLevel.Signatures}}found{{else}}neutral{{end}}">{{.TopLevel.SignatureStatus}}</span></td>
+            <td><span class="chip {{if .TopLevel.Attestations}}found{{else}}neutral{{end}}">{{.TopLevel.AttestationStatus}}</span></td>
+            <td><span class="chip {{if .TopLevel.SBOMs}}found{{else}}neutral{{end}}">{{.TopLevel.SBOMStatus}}</span></td>
+            {{if $other}}<td>{{len .TopLevel.OtherArtifacts}}</td>{{end}}
+            <td>{{if .Platforms}}{{len .Platforms}} variants{{else}}{{len .TopLevel.Layers}} layers{{end}}</td>
+          </tr>
+          {{range $idx, $platform := .Platforms}}
+          <tr class="{{if eq $default (printf "target-platform-%d" $idx)}}is-selected{{end}}" data-coverage-row="target-platform-{{$idx}}">
+            <td><button type="button" class="scope-link" data-target-link="target-platform-{{$idx}}" aria-pressed="{{eq $default (printf "target-platform-%d" $idx)}}">{{$platform.Name}}</button> <a class="scope-digest-link" href="{{inspectURL (printf "%s/%s@%s" $.Report.Registry $.Report.Repository $platform.Digest)}}" aria-label="Inspect {{$platform.Name}} by its immutable digest" title="Inspect this platform alone">↗</a></td>
+            <td><span class="chip {{if $platform.Signatures}}found{{else}}neutral{{end}}">{{$platform.SignatureStatus}}</span></td>
+            <td><span class="chip {{if $platform.Attestations}}found{{else}}neutral{{end}}">{{$platform.AttestationStatus}}</span></td>
+            <td><span class="chip {{if $platform.SBOMs}}found{{else}}neutral{{end}}">{{$platform.SBOMStatus}}</span></td>
+            {{if $other}}<td>{{len $platform.OtherArtifacts}}</td>{{end}}
+            <td>{{if $platform.Base}}<span class="chip found">{{if $platform.Base.SharedLayers}}{{$platform.Base.SharedLayers}} inherited · {{$platform.Base.AddedLayerCount}} added{{else}}Declared base{{end}}</span>{{else}}<span class="chip neutral">Not established</span>{{end}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="target-tabs report-section" data-target-tabs>
+    <div class="scope-toolbar"><label for="scope-select">Viewing</label><select id="scope-select" data-scope-select>
+    <option value="target-top" {{if eq $default "target-top"}}selected{{end}}>{{.TopLevel.ScopeLabel}}</option>
+    {{range $idx, $platform := .Platforms}}<option value="target-platform-{{$idx}}" {{if eq $default (printf "target-platform-%d" $idx)}}selected{{end}}>{{$platform.Name}}</option>{{end}}
+    </select><a href="#coverage-title">Compare evidence ↑</a></div>
+    <div id="target-top" class="target-panel" data-target-panel {{if ne $default "target-top"}}hidden{{end}}>
+      {{template "target" .TopLevel}}
+    </div>
+    {{range $idx, $platform := .Platforms}}
+    <div id="target-platform-{{$idx}}" class="target-panel" data-target-panel {{if ne $default (printf "target-platform-%d" $idx)}}hidden{{end}}>
+      {{template "target" $platform}}
+    </div>
+    {{end}}
+  </div>
   {{if .BuildInputs}}
-  <section class="report-section" aria-labelledby="build-inputs-title">
+  <details class="report-section all-inputs"><summary>All published build inputs ({{len .BuildInputs}})</summary>
     <div class="report-section-head">
       <div>
         <p class="eyebrow">Build inputs</p>
@@ -56,63 +109,15 @@
         {{if .Inspectable}}
         <a class="btn-secondary btn-inline" href="{{inspectURL .Canonical}}">Inspect this image’s evidence</a>
         {{else}}
-        <p class="support-note">This reference could not be inspected under the current registry allow-list.</p>
+        <p class="support-note">No inspection link: an approved registry and a valid immutable digest are required.</p>
         {{end}}
       </article>
       {{end}}
     </div>
-  </section>
+  </details>
   {{end}}
 
-  <section class="report-section" aria-labelledby="coverage-title">
-    <div class="report-section-head">
-      <div>
-        <p class="eyebrow">Evidence coverage</p>
-        <h2 id="coverage-title">Published metadata by image scope</h2>
-      </div>
-      <p class="support-note">Select a scope to inspect its evidence.</p>
-    </div>
-    <div class="coverage-table-wrap">
-      <table class="coverage-table">
-        <thead><tr><th>Scope</th><th>Signatures</th><th>Attestations</th><th>SBOM</th><th>Lineage</th></tr></thead>
-        <tbody>
-          <tr class="is-selected" data-coverage-row="target-top">
-            <td><button type="button" class="scope-link" data-target-link="target-top">Image index</button></td>
-            <td><span class="chip {{if .TopLevel.Signatures}}found{{else}}neutral{{end}}">{{.TopLevel.SignatureStatus}}</span></td>
-            <td><span class="chip {{if .TopLevel.Attestations}}found{{else}}neutral{{end}}">{{.TopLevel.AttestationStatus}}</span></td>
-            <td><span class="chip {{if .TopLevel.SBOMs}}found{{else}}neutral{{end}}">{{.TopLevel.SBOMStatus}}</span></td>
-            <td><span class="chip found">{{len .Platforms}} platforms</span></td>
-          </tr>
-          {{range $idx, $platform := .Platforms}}
-          <tr data-coverage-row="target-platform-{{$idx}}">
-            <td><button type="button" class="scope-link" data-target-link="target-platform-{{$idx}}">{{$platform.Name}}</button></td>
-            <td><span class="chip {{if $platform.Signatures}}found{{else}}neutral{{end}}">{{$platform.SignatureStatus}}</span></td>
-            <td><span class="chip {{if $platform.Attestations}}found{{else}}neutral{{end}}">{{$platform.AttestationStatus}}</span></td>
-            <td><span class="chip {{if $platform.SBOMs}}found{{else}}neutral{{end}}">{{$platform.SBOMStatus}}</span></td>
-            <td>{{if $platform.Base}}<span class="chip found">Base + {{$platform.Base.AddedLayerCount}} layers</span>{{else}}<span class="chip neutral">Unknown</span>{{end}}</td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
-    </div>
-  </section>
 
-  <div class="target-tabs report-section" data-target-tabs>
-    <div class="tab-list" role="tablist" aria-label="Inspected image scopes">
-      <button type="button" class="tab-button is-active" data-target-tab="target-top" role="tab" aria-selected="true">Image index</button>
-      {{range $idx, $platform := .Platforms}}
-      <button type="button" class="tab-button" data-target-tab="target-platform-{{$idx}}" role="tab" aria-selected="false">{{$platform.Name}}</button>
-      {{end}}
-    </div>
-    <div id="target-top" class="target-panel is-active" data-target-panel>
-      {{template "target" .TopLevel}}
-    </div>
-    {{range $idx, $platform := .Platforms}}
-    <div id="target-platform-{{$idx}}" class="target-panel" data-target-panel hidden>
-      {{template "target" $platform}}
-    </div>
-    {{end}}
-  </div>
 </section>
 {{end}}
 {{end}}
@@ -121,8 +126,8 @@
 <section class="section-card target-card">
   <div class="section-head">
     <div>
-      <h2>{{.Name}}</h2>
-      <p class="mono digest-value">{{.Digest}}</p>
+      <h2>{{.ScopeLabel}}</h2>
+      <p>{{if .Layers}}{{len .Layers}} layers · {{bytes .LayerBytes}} compressed · {{end}}{{.ArtifactCount}} published artifact{{if ne .ArtifactCount 1}}s{{end}}</p>
     </div>
     <span class="chip">{{.Kind}}</span>
   </div>
@@ -134,21 +139,23 @@
         <article class="lineage-node">
           <span class="node-label">Runtime base</span>
           <strong class="mono">{{.Base.Reference}}</strong>
-          <span>{{.Base.BaseLayerCount}} shared layers</span>
+          <span>{{if .Base.SharedLayers}}{{.Base.SharedLayers}} matching base layers{{else}}Publisher-declared relationship{{end}}</span>
           {{if .Base.Inspectable}}<a href="{{inspectURL .Base.Canonical}}">Inspect evidence</a>{{end}}
         </article>
         <span class="lineage-arrow" aria-hidden="true">→</span>
         <article class="lineage-node application-node">
           <span class="node-label">Application image</span>
           <strong>{{.Name}}</strong>
-          <span>{{.Base.AddedLayerCount}} added layers</span>
-          <span class="mono digest-value">{{.Digest}}</span>
+          <span>{{if .Base.SharedLayers}}{{.Base.AddedLayerCount}} added layer{{if ne .Base.AddedLayerCount 1}}s{{end}}{{else}}Layer inheritance not established{{end}}</span>
+          <span class="mono" title="{{.Digest}}">{{shortDigest .Digest}}</span>
         </article>
       </div>
       <p class="support-note">Relationship evidence: {{join .Base.Evidence " + "}}.</p>
     </section>
     {{end}}
 
+    {{if and .Layers (not .Base)}}<p class="support-note lineage-empty">No runtime base established from published metadata. Layer digests alone cannot identify a parent image.</p>{{end}}
+    {{if .BuildInputs}}<details class="technical-details"><summary>Build inputs for this scope ({{len .BuildInputs}})</summary><ul class="scope-inputs">{{range .BuildInputs}}<li><span class="chip">{{.Role}}</span> {{if .Inspectable}}<a href="{{inspectURL .Canonical}}">{{.Reference}} ↗</a>{{else}}{{.Reference}}{{end}}<small>{{join .Evidence " · "}}</small></li>{{end}}</ul></details>{{end}}
     {{range .Warnings}}<p class="chip warn">{{.}}</p>{{end}}
     {{if .ArtifactCount}}
       {{if .Signatures}}
@@ -163,21 +170,20 @@
       <h3 class="artifact-section-title">SBOMs</h3>
       <div class="artifact-stack">{{range .SBOMs}}{{template "artifact" .}}{{end}}</div>
       {{end}}
+      {{if .OtherArtifacts}}<h3 class="artifact-section-title">Other published metadata</h3><div class="artifact-stack">{{range .OtherArtifacts}}{{template "artifact" .}}{{end}}</div>{{end}}
     {{else}}
       <div class="empty-state">No supported supply-chain artifacts were discovered for this digest.</div>
     {{end}}
 
-    {{if .Layers}}
     <details class="technical-details">
-      <summary>Image manifest details</summary>
+      <summary>Manifest &amp; layer details</summary>
       <dl class="compact-facts">
-        <dt>Media type</dt><dd>{{.MediaType}}</dd>
+        <dt>Digest</dt><dd class="mono digest-value">{{.Digest}}</dd><dt>Media type</dt><dd>{{.MediaType}}</dd>
         <dt>Layers</dt><dd>{{len .Layers}}</dd>
         {{if .OS}}<dt>Platform</dt><dd>{{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}</dd>{{end}}
       </dl>
-      <ol class="layer-list">{{range .Layers}}<li><span class="mono digest-value">{{.Digest}}</span></li>{{end}}</ol>
+      <p class="support-note">{{if .Layers}}Ordered from base to application. These are descriptors only; layer content is never downloaded.{{else}}This scope has no filesystem layer descriptors.{{end}}</p><ol class="layer-list">{{range .Layers}}<li><span class="mono digest-value">{{.Digest}}</span><span>{{bytes .Size}}</span></li>{{end}}</ol>
     </details>
-    {{end}}
   </div>
 </section>
 {{end}}
@@ -187,35 +193,37 @@
   <div class="artifact-top">
     <div>
       <strong>{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</strong>
-      <p class="mono muted digest-value">{{.Digest}}</p>
+
     </div>
-    <span class="chip found">Found and parsed</span>
+    <span class="chip {{if .Error}}warn{{else}}neutral{{end}}">{{.DecodeStatus}}</span>
   </div>
 
-  {{if .Facts}}
+  <p class="verification-label">{{if .VerificationStatus}}{{.VerificationStatus}}{{else}}Not verified{{end}} · No policy trust evaluated</p>
+  {{if .OverviewFacts}}
   <dl class="artifact-facts">
-    {{range .Facts}}<dt>{{.Key}}</dt><dd>{{if .Link}}<a class="fact-link" href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd>{{end}}
+    {{range .OverviewFacts}}<dt>{{.Key}}</dt><dd>{{if .Link}}<a class="fact-link" href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd>{{end}}
   </dl>
   {{end}}
 
+  {{if .CertificateFacts}}<details class="technical-details"><summary>Published certificate identity</summary><dl class="compact-facts">{{range .CertificateFacts}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}</dl></details>{{end}}
   {{if .Components}}
+  <div class="component-inventory"><div class="inventory-toolbar"><strong>Package inventory</strong><label>Filter packages <input type="search" class="component-filter" placeholder="Name, version, ecosystem…" aria-label="Filter packages"></label></div><p class="filter-count support-note" aria-live="polite">{{len .Components}} packages shown</p>
   <div class="component-table-wrap">
     {{if .ComponentsTruncated}}<p class="payload-note">Component inventory is limited to the first 200 entries.</p>{{end}}
     <table class="component-table">
-      <thead><tr><th>Component</th><th>Version</th><th>Ecosystem</th><th>Platform</th><th>Supplier or license</th></tr></thead>
+      <thead><tr><th>Component</th><th>Version</th><th>Ecosystem</th><th>License</th></tr></thead>
       <tbody>
         {{range .Components}}
         <tr>
-          <td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td>
+          <td title="{{.PURL}}">{{if .Name}}{{.Name}}{{else}}—{{end}}{{if and .Supplier (ne .Supplier "NOASSERTION")}}<small class="package-supplier">{{.Supplier}}</small>{{end}}</td>
           <td>{{if .Version}}{{.Version}}{{else}}—{{end}}</td>
           <td>{{if .Ecosystem}}{{.Ecosystem}}{{else}}—{{end}}</td>
-          <td>{{if .Platform}}{{.Platform}}{{else}}—{{end}}</td>
-          <td>{{if .Supplier}}{{.Supplier}}{{else if .License}}{{.License}}{{else}}—{{end}}</td>
+          <td>{{if and .License (ne .License "NOASSERTION")}}{{.License}}{{else}}—{{end}}</td>
         </tr>
         {{end}}
       </tbody>
     </table>
-  </div>
+  </div></div>
   {{end}}
 
   {{if .Error}}<p class="chip bad">{{.Error}}</p>{{end}}
@@ -224,7 +232,7 @@
     <details class="technical-details inline-details">
       <summary>Technical details</summary>
       <dl class="compact-facts">
-        <dt>Discovery</dt><dd>{{.Discovery}}</dd>
+        <dt>Artifact digest</dt><dd class="mono digest-value">{{.Digest}}</dd><dt>Target digest</dt><dd class="mono digest-value">{{.TargetDigest}}</dd>{{range .Facts}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}<dt>Discovery</dt><dd>{{.Discovery}}</dd>
         {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
         {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
         {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
@@ -232,32 +240,7 @@
     </details>
   </div>
 
-  {{if .RawView}}
-  <div class="payload-tabs" data-artifact-tabs>
-    <div class="tab-list compact-tabs" role="tablist" aria-label="Artifact payload views">
-      <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded structure</button>
-      <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw JSON</button>
-    </div>
-    <div class="artifact-panel is-active" data-artifact-panel="decoded">
-      {{if .DecodedRows}}
-        {{if .DecodedRowsTruncated}}<p class="payload-note">Decoded structure view is truncated.</p>{{end}}
-        <div class="payload-table-wrap">
-          <table class="payload-table">
-            {{template "payloadColgroup"}}
-            <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
-            <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
-          </table>
-        </div>
-      {{else}}
-        <div class="empty-state">This payload is not structured JSON.</div>
-      {{end}}
-    </div>
-    <div class="artifact-panel" data-artifact-panel="raw" hidden>
-      {{if .RawViewTruncated}}<p class="payload-note">Raw payload view is truncated.</p>{{end}}
-      <pre class="payload-pre">{{.RawView}}</pre>
-    </div>
-  </div>
-  {{end}}
+  {{if .RawView}}<div class="payload-lazy"><a class="payload-load" href="/artifacts/{{.ID}}/view" hx-get="/artifacts/{{.ID}}/view" hx-target="closest .payload-lazy" hx-swap="innerHTML">Explore decoded structure &amp; raw payload →</a></div>{{end}}
 </article>
 {{end}}
 
@@ -293,4 +276,33 @@
 
 {{define "payloadColgroup"}}
 <colgroup><col class="payload-col-key"><col class="payload-col-value"></colgroup>
+{{end}}
+
+{{define "payload-view"}}
+<details open class="payload-disclosure"><summary>Decoded structure &amp; raw payload</summary>
+  <div class="payload-tabs" data-artifact-tabs>
+    <div class="tab-list compact-tabs" role="tablist" aria-label="Artifact payload views">
+      <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded structure</button>
+      <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw JSON</button>
+    </div>
+    <div class="artifact-panel is-active" data-artifact-panel="decoded">
+      {{if .DecodedRows}}
+        {{if .DecodedRowsTruncated}}<p class="payload-note">Decoded structure view is truncated.</p>{{end}}
+        <div class="payload-table-wrap">
+          <table class="payload-table">
+            {{template "payloadColgroup"}}
+            <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
+            <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
+          </table>
+        </div>
+      {{else}}
+        <div class="empty-state">This payload is not structured JSON.</div>
+      {{end}}
+    </div>
+    <div class="artifact-panel" data-artifact-panel="raw" hidden>
+      {{if .RawViewTruncated}}<p class="payload-note">Raw payload view is truncated.</p>{{end}}
+      <pre class="payload-pre">{{.RawView}}</pre>
+    </div>
+  </div>
+</details>
 {{end}}
