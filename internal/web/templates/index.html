@@ -6,7 +6,7 @@
   <title>OCI Supply Chain Observatory</title>
   <meta name="description" content="Inspect public OCI image signatures, attestations, provenance, and SBOM metadata.">
   <link rel="stylesheet" href="{{assetURL "/static/css/style.css"}}">
-  <script src="{{assetURL "/static/js/script.js"}}"></script>
+  {{template "head-scripts" .}}
 </head>
 <body>
   <div class="page-shell">
@@ -46,6 +46,5 @@
       <p>Inspecting registry metadata...</p>
     </div>
   </div>
-  <script src="{{assetURL "/static/js/htmx.min.js"}}"></script>
 </body>
 </html>

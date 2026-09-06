@@ -15,7 +15,7 @@ Important controls:
 - Requests use strict server and outbound registry timeouts.
 - POST requests are protected with `Origin` and `Sec-Fetch-Site` checks.
 - Inspection job identifiers are random process-local IDs. They are used only to retrieve the rendered result for an inspection already started by `POST /inspect`.
-- Static HTMX and app JavaScript are self-hosted, and the Content Security Policy only allows self-hosted scripts and styles.
+- HTMX is loaded from an exact unpkg version with a SHA-384 Subresource Integrity check and anonymous CORS mode. The Content Security Policy permits scripts only from the application and `https://unpkg.com`; app JavaScript and styles remain self-hosted. Pinning both the version and content hash prevents an unexpected CDN response from executing.
 - Artifact downloads are served only for artifacts discovered during inspection and retained by the current cache/service process.
 - Lineage navigation displays a tag only when registry-published metadata supplied it, and uses an immutable digest for the linked inspection. The app does not enumerate repository tags to reverse-map digests.
 - Decoded payload views parse JSON and recursively expand embedded base64 JSON for display only. Decoding does not imply cryptographic verification or policy trust.

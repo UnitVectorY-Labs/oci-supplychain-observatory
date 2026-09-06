@@ -1,26 +1,19 @@
-(function () {
-  window.htmx = window.htmx || {};
-  window.htmx.config = window.htmx.config || {};
-  window.htmx.config.allowEval = false;
-  window.htmx.config.allowScriptTags = false;
-  window.htmx.config.includeIndicatorStyles = false;
-})();
-
 function clearResults() {
   document.body.classList.add("is-loading");
 }
 
-document.addEventListener("htmx:beforeRequest", function (event) {
-  if (event.detail && event.detail.elt && event.detail.elt.matches(".inspect-form")) {
+document.addEventListener("htmx:before:request", function (event) {
+  var elt = event.detail && event.detail.ctx && event.detail.ctx.sourceElement;
+  if (elt && elt.matches(".inspect-form")) {
     document.body.classList.add("is-loading");
   }
 });
 
-document.addEventListener("htmx:afterSwap", function () {
+document.addEventListener("htmx:after:swap", function () {
   document.body.classList.remove("is-loading");
 });
 
-document.addEventListener("htmx:responseError", function () {
+document.addEventListener("htmx:response:error", function () {
   document.body.classList.remove("is-loading");
 });
 
