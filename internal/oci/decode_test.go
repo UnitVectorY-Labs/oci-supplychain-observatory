@@ -144,3 +144,21 @@ func findPayloadRowDeep(rows []PayloadRow, key string) *PayloadRow {
 	}
 	return nil
 }
+
+func TestBuildPayloadViewsStrictJSONAndStableComparison(t *testing.T) {
+	for _, raw := range [][]byte{
+		[]byte(`{"name":"one","name":"two"}`),
+		[]byte("{\"name\":\"\xff\"}"),
+	} {
+		views := BuildPayloadViews(raw, 4096)
+		if views.DecodedJSON || views.Raw != string(raw) {
+			t.Fatalf("invalid JSON should remain raw: %#v", views)
+		}
+	}
+	for i := 0; i < 100; i++ {
+		views := BuildPayloadViews([]byte(`{"z":1,"a":{"y":2,"b":3}}`), 4096)
+		if !views.DecodedJSON || views.DecodedChanged {
+			t.Fatalf("unchanged JSON was marked as changed: %#v", views)
+		}
+	}
+}
