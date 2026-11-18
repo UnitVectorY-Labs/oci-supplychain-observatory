@@ -7,7 +7,8 @@ import (
 	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"encoding/pem"
 	"fmt"
 	"net/url"
@@ -371,7 +372,7 @@ func isStructuredJSON(b []byte) bool {
 	if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
 		return false
 	}
-	return json.Valid(trimmed)
+	return jsontext.Value(trimmed).IsValid()
 }
 
 func DecodeCertificateDetails(rawBase64 string) map[string]any {
@@ -500,7 +501,7 @@ func flattenPayloadRowsFromValue(v any, limit int) []PayloadRow {
 }
 
 func prettyLimited(v any, max int64) (string, bool) {
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := json.Marshal(v, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return fmt.Sprint(v), false
 	}
@@ -512,11 +513,11 @@ func prettyLimited(v any, max int64) (string, bool) {
 }
 
 func jsonEqual(a, b any) bool {
-	ab, err := json.Marshal(a)
+	ab, err := json.Marshal(a, json.Deterministic(true))
 	if err != nil {
 		return false
 	}
-	bb, err := json.Marshal(b)
+	bb, err := json.Marshal(b, json.Deterministic(true))
 	if err != nil {
 		return false
 	}
@@ -528,9 +529,9 @@ func Preview(raw []byte, max int64) (string, bool) {
 	if truncated {
 		raw = raw[:max]
 	}
-	var pretty bytes.Buffer
-	if json.Indent(&pretty, raw, "", "  ") == nil {
-		return pretty.String(), truncated
+	pretty := jsontext.Value(bytes.Clone(raw))
+	if pretty.IsValid() && pretty.Indent(jsontext.WithIndent("  ")) == nil {
+		return string(pretty), truncated
 	}
 	return string(raw), truncated
 }

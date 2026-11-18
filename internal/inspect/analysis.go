@@ -2,7 +2,8 @@ package inspect
 
 import (
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"sort"
@@ -77,7 +78,7 @@ func decodeArtifactDocument(raw []byte) (map[string]any, bool) {
 		decoded, ok := decodeBase64(payload)
 		if !ok {
 			decoded = []byte(strings.TrimSpace(payload))
-			if !json.Valid(decoded) {
+			if !jsontext.Value(decoded).IsValid() {
 				return normalizePredicate(doc), true
 			}
 		}
@@ -93,7 +94,7 @@ func decodeArtifactDocument(raw []byte) (map[string]any, bool) {
 func decodeBase64(value string) ([]byte, bool) {
 	for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 		decoded, err := encoding.DecodeString(strings.TrimSpace(value))
-		if err == nil && json.Valid(decoded) {
+		if err == nil && jsontext.Value(decoded).IsValid() {
 			return decoded, true
 		}
 	}
