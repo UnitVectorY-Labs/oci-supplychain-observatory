@@ -216,3 +216,47 @@ func TestOriginCheckBlocksCrossSitePost(t *testing.T) {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
+
+func TestLoadingPollTargetsConnectedShellAndOpenTabTargetsExist(t *testing.T) {
+	server := newTestServer(t)
+
+	var loadingBuf bytes.Buffer
+	if err := server.templates.ExecuteTemplate(&loadingBuf, "results.html", ResultData{
+		Input:   "ghcr.io/example/app:latest",
+		Loading: &LoadingData{JobID: "abc123", Input: "ghcr.io/example/app:latest"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loadingHTML := loadingBuf.String()
+	for _, want := range []string{`id="inspection-shell"`, `hx-target="#inspection-shell"`, `hx-swap="innerHTML"`} {
+		if !strings.Contains(loadingHTML, want) {
+			t.Errorf("loading shell missing %q", want)
+		}
+	}
+
+	report := &inspect.Report{
+		Registry: "ghcr.io", Repository: "example/app", ResolvedDigest: "sha256:abc",
+		TopLevel: inspect.TargetResult{Kind: "Image index"},
+		Platforms: []inspect.TargetResult{{
+			Name: "linux/amd64", Kind: "Platform manifest", OS: "linux", Architecture: "amd64",
+			Layers:       []inspect.LayerDescriptor{{Index: 1, Digest: "sha256:111", Size: 100}},
+			Config:       &inspect.ImageConfig{User: "65532:65532"},
+			Attestations: []inspect.Artifact{{ID: "att1", Provenance: &inspect.ProvenanceDetail{SLSAVersion: "SLSA v1.0"}}},
+			Signatures:   []inspect.Artifact{{ID: "sig1", Signature: &inspect.SignatureDetail{Signer: "test"}}},
+			SBOMs:        []inspect.Artifact{{ID: "sbom1", SBOM: &inspect.SBOMDetail{Format: "SPDX-2.3", TotalComponents: 1, TotalComponentsLabel: "1"}}},
+		}},
+	}
+	var reportBuf bytes.Buffer
+	if err := server.templates.ExecuteTemplate(&reportBuf, "result-panel.html", ResultData{Report: report}); err != nil {
+		t.Fatal(err)
+	}
+	reportHTML := reportBuf.String()
+	for _, tabID := range []string{"p0-tab-evidence", "p0-tab-sbom", "p0-tab-layers", "p0-tab-config"} {
+		if !strings.Contains(reportHTML, `data-open-tab="`+tabID+`"`) {
+			t.Errorf("missing quick-jump button for %s", tabID)
+		}
+		if !strings.Contains(reportHTML, `id="`+tabID+`" role="tab"`) {
+			t.Errorf("missing matching tab element for %s", tabID)
+		}
+	}
+}

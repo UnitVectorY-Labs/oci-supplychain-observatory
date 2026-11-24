@@ -1,5 +1,5 @@
 {{if .Loading}}
-<section id="inspection-panel" class="uvy-panel" hx-get="/inspect/jobs/{{.Loading.JobID}}" hx-trigger="load delay:150ms, every 1s" hx-swap="outerHTML" data-polling>
+<section id="inspection-panel" class="uvy-panel" hx-get="/inspect/jobs/{{.Loading.JobID}}" hx-trigger="load delay:150ms, every 1s" hx-target="#inspection-shell" hx-swap="innerHTML" data-polling>
   <div class="loading-row" data-polling-active>
     <span class="uvy-spinner" aria-hidden="true"></span>
     <div>
@@ -562,7 +562,7 @@
         hx-get="/artifacts/{{$art.ID}}/packages"
         hx-target="#sbom-results-{{$art.ID}}"
         hx-swap="outerHTML"
-        hx-trigger="input changed delay:250ms from:find input[type=search], change from:find select, submit">
+        hx-trigger="input delay:250ms, change, submit">
         <input type="hidden" name="page" value="1">
         <div class="uvy-field">
           <label for="sbom-q-{{$sid}}-{{$art.ID}}">Search packages</label>

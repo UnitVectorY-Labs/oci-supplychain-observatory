@@ -19,6 +19,8 @@
     {{if .Report}}<span class="uvy-badge">{{.Report.TopLevel.Kind}}</span>{{end}}
   </div>
 
-  {{template "result-panel.html" .}}
+  <div id="inspection-shell">
+    {{template "result-panel.html" .}}
+  </div>
 </main>
 {{template "footer"}}
