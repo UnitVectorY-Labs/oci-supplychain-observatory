@@ -7,6 +7,7 @@ The allowed registries are configured in `internal/config/registries.yaml`:
 ```yaml
 registries:
   - ghcr.io
+  - registry.access.redhat.com
   - registry.k8s.io
   - gcr.io
   - quay.io

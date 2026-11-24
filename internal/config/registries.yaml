@@ -2,6 +2,7 @@
 # Only images from these registries can be inspected.
 registries:
   - ghcr.io
+  - registry.access.redhat.com
   - registry.k8s.io
   - gcr.io
   - quay.io
