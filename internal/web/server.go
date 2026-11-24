@@ -13,8 +13,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/config"
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/inspect"
@@ -27,6 +29,12 @@ var staticFS embed.FS
 
 //go:embed templates/*
 var templateFS embed.FS
+
+const (
+	maxRetainedJobs = 500
+	jobRetentionTTL = 15 * time.Minute
+	defaultPageSize = 50
+)
 
 type Server struct {
 	cfg        config.Config
@@ -49,9 +57,41 @@ func New(cfg config.Config, inspector *inspect.Service, logger *slog.Logger) (*S
 		"registries":  func() []string { return cfg.AllowedList },
 		"bytes":       formatBytes,
 		"shortDigest": shortDigest,
+		"shortCommit": shortCommit,
 		"assetURL":    func(path string) string { return assetURL(path, assetVersions) },
 		"join":        strings.Join,
 		"inspectURL":  func(image string) string { return "/inspect?image=" + url.QueryEscape(image) },
+		"queryEscape": url.QueryEscape,
+		"version":     func() string { return cfg.Version },
+		"showVersion": func() bool { return cfg.ShowVersion && strings.TrimSpace(cfg.Version) != "" },
+		"formatUTC": func(t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
+			return t.UTC().Format("2006-01-02 15:04 UTC")
+		},
+		"formatISO": func(t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
+			return t.UTC().Format(time.RFC3339)
+		},
+		"add": func(a, b int) int { return a + b },
+		"sub": func(a, b int) int { return a - b },
+		"topFacets": func(facets []inspect.FacetCount, limit int) []inspect.FacetCount {
+			if len(facets) <= limit {
+				return facets
+			}
+			return facets[:limit]
+		},
+		"packagePage": func(a inspect.Artifact) inspect.PackagePage {
+			return a.FilterComponents("", "", "", 1, defaultPageSize)
+		},
+		"scopeView": func(scopeID string, report *inspect.Report, target inspect.TargetResult) ScopeView {
+			return ScopeView{ScopeID: scopeID, Report: report, Target: target}
+		},
+		"hasPrefix": strings.HasPrefix,
+		"httpsLink": safeLink,
 	}
 	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, "templates/*.html")
 	if err != nil {
@@ -73,6 +113,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /inspect/jobs/{id}", s.handleInspectJob)
 	mux.HandleFunc("GET /artifacts/{id}/download", s.handleArtifactDownload)
 	mux.HandleFunc("GET /artifacts/{id}/view", s.handleArtifactView)
+	mux.HandleFunc("GET /artifacts/{id}/packages", s.handleArtifactPackages)
 	mux.HandleFunc("GET /healthz", textHandler("ok"))
 	mux.HandleFunc("GET /readyz", textHandler("ready"))
 
@@ -96,6 +137,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 type IndexData struct {
 	Allowed []string
+	Input   string
+	Error   *ErrorData
 }
 
 type ResultData struct {
@@ -104,6 +147,12 @@ type ResultData struct {
 	Error   *ErrorData
 	Loading *LoadingData
 	Job     *inspectionJob
+}
+
+type ScopeView struct {
+	ScopeID string
+	Report  *inspect.Report
+	Target  inspect.TargetResult
 }
 
 type ErrorData struct {
@@ -130,17 +179,22 @@ func (s *Server) handleInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input := strings.TrimSpace(r.FormValue("image"))
+	if input == "" && r.Method == http.MethodGet && !strings.EqualFold(r.Header.Get("HX-Request"), "true") {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
 	if _, err := reference.Parse(input, reference.Config{AllowedRegistry: s.cfg.AllowedRegistry}); err != nil {
 		s.renderResultError(w, r, "Inspection failed", err.Error(), http.StatusBadRequest)
 		return
 	}
 	job := s.jobs.create(input)
 	go s.runInspectionJob(job.ID, input)
+	data := ResultData{Input: input, Loading: &LoadingData{JobID: job.ID, Input: input}}
 	if strings.EqualFold(r.Header.Get("HX-Request"), "true") {
-		s.render(w, http.StatusOK, "results.html", ResultData{Loading: &LoadingData{JobID: job.ID, Input: input}})
+		s.render(w, http.StatusOK, "results.html", data)
 		return
 	}
-	s.render(w, http.StatusOK, "page-results.html", ResultData{Loading: &LoadingData{JobID: job.ID, Input: input}})
+	s.render(w, http.StatusOK, "page-results.html", data)
 }
 
 func (s *Server) runInspectionJob(id, input string) {
@@ -156,7 +210,7 @@ func (s *Server) runInspectionJob(id, input string) {
 func (s *Server) handleInspectJob(w http.ResponseWriter, r *http.Request) {
 	job, ok := s.jobs.get(r.PathValue("id"))
 	if !ok {
-		s.render(w, http.StatusNotFound, "result-panel.html", ResultData{Error: &ErrorData{Title: "Inspection expired", Message: "Start a new inspection."}})
+		s.render(w, http.StatusNotFound, "result-panel.html", ResultData{Error: &ErrorData{Title: "Inspection expired", Message: "Start a new inspection from the form above."}})
 		return
 	}
 	if !job.Done {
@@ -164,16 +218,16 @@ func (s *Server) handleInspectJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if job.Err != nil {
-		message := "The registry request could not be completed."
+		message := "The registry request could not be completed. Confirm the repository path and tag exist and are publicly accessible."
 		if errors.Is(job.Err, reference.ErrInvalidInput) || errors.Is(job.Err, reference.ErrRegistryNotAllowed) {
 			message = job.Err.Error()
 		} else if errors.Is(job.Err, oci.ErrAuthenticationNeeded) {
-			message = "The registry denied anonymous access to this image or its metadata."
+			message = "The registry denied anonymous access to this image or its metadata. Only public container images can be inspected."
 		}
-		s.render(w, http.StatusOK, "result-panel.html", ResultData{Error: &ErrorData{Title: "Inspection failed", Message: message}})
+		s.render(w, http.StatusOK, "result-panel.html", ResultData{Input: job.Input, Error: &ErrorData{Title: "Inspection failed", Message: message}})
 		return
 	}
-	s.render(w, http.StatusOK, "result-panel.html", ResultData{Report: job.Report})
+	s.render(w, http.StatusOK, "result-panel.html", ResultData{Input: job.Input, Report: job.Report})
 }
 
 func (s *Server) renderResultError(w http.ResponseWriter, r *http.Request, title, message string, status int) {
@@ -199,6 +253,20 @@ func (s *Server) handleArtifactView(w http.ResponseWriter, r *http.Request) {
 		name = "payload-view"
 	}
 	s.render(w, http.StatusOK, name, artifact)
+}
+
+func (s *Server) handleArtifactPackages(w http.ResponseWriter, r *http.Request) {
+	artifact, ok := s.inspector.Artifact(r.PathValue("id"))
+	if !ok || artifact == nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	ecosystem := strings.TrimSpace(r.URL.Query().Get("ecosystem"))
+	license := strings.TrimSpace(r.URL.Query().Get("license"))
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	result := artifact.FilterComponents(q, ecosystem, license, page, defaultPageSize)
+	s.render(w, http.StatusOK, "sbom-table", result)
 }
 
 func (s *Server) handleArtifactDownload(w http.ResponseWriter, r *http.Request) {
@@ -271,12 +339,22 @@ func safeFilename(name string) string {
 	return strings.Trim(name, ".-")
 }
 
+func safeLink(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return ""
+	}
+	return parsed.String()
+}
+
 type inspectionJob struct {
-	ID     string
-	Input  string
-	Done   bool
-	Report *inspect.Report
-	Err    error
+	ID         string
+	Input      string
+	Done       bool
+	Report     *inspect.Report
+	Err        error
+	CreatedAt  time.Time
+	FinishedAt time.Time
 }
 
 type jobStore struct {
@@ -289,11 +367,42 @@ func newJobStore() *jobStore {
 }
 
 func (s *jobStore) create(input string) *inspectionJob {
-	job := &inspectionJob{ID: randomID(), Input: input}
+	now := time.Now()
+	job := &inspectionJob{ID: randomID(), Input: input, CreatedAt: now}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.evictLocked(now)
 	s.jobs[job.ID] = job
-	s.mu.Unlock()
 	return job
+}
+
+func (s *jobStore) evictLocked(now time.Time) {
+	if len(s.jobs) < maxRetainedJobs {
+		for k, j := range s.jobs {
+			if j.Done && !j.FinishedAt.IsZero() && now.Sub(j.FinishedAt) > jobRetentionTTL {
+				delete(s.jobs, k)
+			}
+		}
+		return
+	}
+	for k, j := range s.jobs {
+		if (j.Done && now.Sub(j.FinishedAt) > jobRetentionTTL) || now.Sub(j.CreatedAt) > jobRetentionTTL*2 {
+			delete(s.jobs, k)
+		}
+	}
+	if len(s.jobs) >= maxRetainedJobs {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, j := range s.jobs {
+			if oldestKey == "" || j.CreatedAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = j.CreatedAt
+			}
+		}
+		if oldestKey != "" {
+			delete(s.jobs, oldestKey)
+		}
+	}
 }
 
 func (s *jobStore) finish(id string, report *inspect.Report, err error) {
@@ -303,6 +412,7 @@ func (s *jobStore) finish(id string, report *inspect.Report, err error) {
 		job.Done = true
 		job.Report = report
 		job.Err = err
+		job.FinishedAt = time.Now()
 	}
 }
 
@@ -311,6 +421,10 @@ func (s *jobStore) get(id string) (*inspectionJob, bool) {
 	defer s.mu.Unlock()
 	job, ok := s.jobs[id]
 	if !ok {
+		return nil, false
+	}
+	if job.Done && !job.FinishedAt.IsZero() && time.Since(job.FinishedAt) > jobRetentionTTL {
+		delete(s.jobs, id)
 		return nil, false
 	}
 	clone := *job
@@ -340,6 +454,17 @@ func shortDigest(value string) string {
 		return value[:19] + "…" + value[len(value)-4:]
 	}
 	return value
+}
+
+func shortCommit(value string) string {
+	s := strings.TrimSpace(value)
+	if idx := strings.Index(s, ":"); idx >= 0 {
+		s = s[idx+1:]
+	}
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 func (d ResultData) SearchInput() string {

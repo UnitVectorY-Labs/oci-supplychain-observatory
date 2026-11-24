@@ -139,3 +139,80 @@ func TestUnknownArtifactViewReturnsNotFound(t *testing.T) {
 		t.Fatalf("status = %d", recorder.Code)
 	}
 }
+
+func TestEmptyInspectRedirectsHome(t *testing.T) {
+	server := newTestServer(t)
+	recorder := httptest.NewRecorder()
+	server.handleInspect(recorder, httptest.NewRequest(http.MethodGet, "/inspect", nil))
+	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/" {
+		t.Fatalf("status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestUVYDesignComplianceAndOptionalVersionFooter(t *testing.T) {
+	cfg := config.Config{
+		Version:         "v1.2.3",
+		ShowVersion:     true,
+		AllowedList:     []string{"ghcr.io"},
+		AllowedRegistry: map[string]bool{"ghcr.io": true},
+	}
+	service := inspect.NewService(cfg, nil, cache.NewMemory[*inspect.Report](), nil)
+	server, err := New(cfg, service, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var rendered bytes.Buffer
+	if err := server.templates.ExecuteTemplate(&rendered, "index.html", IndexData{Allowed: cfg.AllowedList}); err != nil {
+		t.Fatal(err)
+	}
+	html := rendered.String()
+	for _, want := range []string{
+		"/static/css/uvy.css",
+		"/static/js/uvy.js",
+		`class="uvy-mark"`,
+		`id="theme"`,
+		"UnitVectorY-Labs",
+		"MIT License",
+		"on GitHub",
+		`<p class="version">Version v1.2.3</p>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	if strings.Contains(html, "UVY") {
+		t.Error("index.html contains forbidden UVY brand abbreviation")
+	}
+	if strings.Contains(html, `style="`) {
+		t.Error("index.html contains inline style attribute violating CSP style-src 'self'")
+	}
+
+	// Verify .version is omitted completely when ShowVersion is false.
+	cfg.ShowVersion = false
+	serverNoVer, err := New(cfg, service, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered.Reset()
+	if err := serverNoVer.templates.ExecuteTemplate(&rendered, "index.html", IndexData{Allowed: cfg.AllowedList}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered.String(), `class="version"`) || strings.Contains(rendered.String(), "v1.2.3") {
+		t.Error("footer rendered version when ShowVersion is false")
+	}
+}
+
+func TestOriginCheckBlocksCrossSitePost(t *testing.T) {
+	server := newTestServer(t)
+	handler := server.wrapWithOriginCheck(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/inspect", nil)
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}

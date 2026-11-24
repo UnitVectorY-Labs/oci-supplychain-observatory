@@ -1,31 +1,85 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OCI Supply Chain Observatory</title>
-  <meta name="description" content="Explore the platforms, build origins, signatures and software inventory of a public container image.">
-  <link rel="stylesheet" href="{{assetURL "/static/css/style.css"}}">
-  {{template "head-scripts" .}}
+  <title>OCI Supply Chain Observatory — UnitVectorY-Labs</title>
+  <meta name="description" content="Inspect published supply chain metadata for public OCI container images: multi-platform manifests, signatures, SLSA provenance, SBOMs, runtime configuration, and base-image lineage.">
+  {{template "head-assets" .}}
 </head>
 <body>
-<div class="page-shell">
-  {{template "header"}}
-  <main class="search-main" id="app">
-    <section class="search-panel" aria-labelledby="search-title">
-      <p class="eyebrow">Look inside the supply chain</p>
-      <h1 id="search-title">One image.<br>Every platform. <span class="muted-heading">A clearer picture.</span></h1>
-      <p class="search-copy">Understand what’s inside a container, where it came from, and what evidence its publisher provides.</p>
-      {{template "search-form"}}
-      <p class="input-hint">Paste a public image reference. Include a registry, repository, and tag or digest.<br>Docker Hub shorthand is supported; omitted tags resolve to <code>latest</code>.</p>
-      <div class="intro-grid">
-        <article><span class="step-number">01</span><h2>Follow the build</h2><p>Trace published build inputs and distinguish declared bases from matching layer stacks.</p></article>
-        <article><span class="step-number">02</span><h2>Compare platforms</h2><p>Move between architectures and see exactly which digest each piece of evidence belongs to.</p></article>
-        <article><span class="step-number">03</span><h2>Read the evidence</h2><p>Explore packages, provenance, and signing claims. Keep the original metadata within reach.</p></article>
+  {{template "header-home"}}
+  <main class="page uvy-stack" id="main">
+    <section class="uvy-panel" aria-labelledby="lookup-heading">
+      <div class="uvy-panel__header">
+        <h2 id="lookup-heading">Inspect a public container image</h2>
+        <span class="uvy-badge">Metadata only · No layer downloads</span>
       </div>
+      <p class="uvy-lead">Enter a public container image reference to resolve its immutable digest and decode published signatures, SLSA build provenance, SBOMs, platform manifests, configuration, and underlying base-image layers.</p>
+      {{template "search-form" .Input}}
+      <p class="uvy-hint">Accepts <code>registry/repository:tag</code> or <code>registry/repository@sha256:...</code>. Docker Hub shorthand (for example <code>library/alpine:latest</code> or <code>alpine</code>) is normalized automatically; omitted tags resolve to <code>latest</code>.</p>
+    </section>
+
+    <ul class="uvy-features" aria-label="What this observatory inspects">
+      <li>
+        <h2 class="with-icon">
+          <svg class="icon icon-accent" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-layers-subtract"></use></svg>
+          Multi-platform manifests &amp; layers
+        </h2>
+        <p>Resolves mutable tags to immutable <code>sha256</code> digests, compares every architecture in an OCI image index, and maps image config build history to compressed layers without pulling filesystem blobs.</p>
+      </li>
+      <li>
+        <h2 class="with-icon">
+          <svg class="icon icon-accent" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-shield-check"></use></svg>
+          Signatures &amp; identity claims
+        </h2>
+        <p>Discovers OCI referrers and Cosign attachments, extracts X.509 signing certificates, Fulcio OIDC issuers, and Rekor log entries, and checks embedded cryptographic signatures separately from policy trust.</p>
+      </li>
+      <li>
+        <h2 class="with-icon">
+          <svg class="icon icon-accent" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-git-branch"></use></svg>
+          Build provenance &amp; base lineage
+        </h2>
+        <p>Decodes SLSA v0.2 and v1.0 source repositories, commits, workflows, and builders—then matches layer digest prefixes against provenance inputs and OCI annotations to link directly to underlying base images.</p>
+      </li>
+      <li>
+        <h2 class="with-icon">
+          <svg class="icon icon-accent" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-box"></use></svg>
+          Published SBOMs &amp; raw evidence
+        </h2>
+        <p>Presents SPDX and CycloneDX software inventories with ecosystem and license breakdowns and searchable package tables, while keeping decoded JSON structures and raw artifact downloads one click away.</p>
+      </li>
+    </ul>
+
+    <section class="uvy-panel" aria-labelledby="boundaries-heading">
+      <div class="uvy-panel__header">
+        <h2 id="boundaries-heading">How inspection works</h2>
+        <span class="uvy-count">Public read-only inspection</span>
+      </div>
+      <dl class="uvy-kv uvy-kv--tight">
+        <div>
+          <dt>Metadata only</dt>
+          <dd>Reads OCI manifests, image config JSON, OCI referrers, BuildKit index attestations, and Cosign metadata attachments. Container filesystem layers are never downloaded or executed.</dd>
+        </div>
+        <div>
+          <dt>No generation or scanning</dt>
+          <dd>Displays only metadata published by the image maintainer to the registry. Does not generate SBOMs or run vulnerability scans.</dd>
+        </div>
+        <div>
+          <dt>Immutable links</dt>
+          <dd>Mutable tags are resolved to <code>sha256</code> digests before discovery. Links to platform variants, runtime bases, and build inputs navigate by immutable digest.</dd>
+        </div>
+        <div>
+          <dt>Verification boundaries</dt>
+          <dd>Explicitly separates <strong>discovered</strong>, <strong>decoded</strong>, <strong>embedded signature valid</strong>, and <strong>policy trusted</strong> states. Certificate chains, Rekor inclusion proofs, and trust policies are not evaluated.</dd>
+        </div>
+        <div>
+          <dt>Allowed registries</dt>
+          <dd>Anonymous HTTPS requests are restricted to configured public registries: {{range $i, $r := .Allowed}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}.</dd>
+        </div>
+      </dl>
     </section>
   </main>
   {{template "footer"}}
-</div>
 </body>
 </html>

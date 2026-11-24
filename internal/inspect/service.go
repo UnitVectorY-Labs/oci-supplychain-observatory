@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,12 +17,24 @@ import (
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/config"
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/oci"
 	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/reference"
+	"github.com/UnitVectorY-Labs/oci-supplychain-observatory/internal/verify"
+)
+
+const (
+	maxPlatformConcurrency = 6
+	maxRetainedArtifacts   = 2000
+	artifactRetentionTTL   = 20 * time.Minute
 )
 
 type Registry interface {
 	GetManifest(ctx context.Context, registry, repository, reference string) (oci.RegistryResponse, oci.Manifest, error)
 	GetReferrers(ctx context.Context, registry, repository, digest string, limit int) ([]oci.Descriptor, []string)
 	GetBlob(ctx context.Context, registry, repository, digest string, maxBytes int64) ([]byte, error)
+}
+
+type retainedArtifact struct {
+	artifact  *Artifact
+	expiresAt time.Time
 }
 
 type Service struct {
@@ -31,7 +44,7 @@ type Service struct {
 	cacheTTL  time.Duration
 	logger    *slog.Logger
 	mu        sync.Mutex
-	artifacts map[string]*Artifact
+	artifacts map[string]retainedArtifact
 }
 
 func NewService(cfg config.Config, registry Registry, reportCache cache.Cache[*Report], logger *slog.Logger) *Service {
@@ -44,7 +57,7 @@ func NewService(cfg config.Config, registry Registry, reportCache cache.Cache[*R
 		cache:     reportCache,
 		cacheTTL:  10 * time.Minute,
 		logger:    logger,
-		artifacts: map[string]*Artifact{},
+		artifacts: map[string]retainedArtifact{},
 	}
 }
 
@@ -73,8 +86,15 @@ func (s *Service) Inspect(ctx context.Context, input string) (*Report, error) {
 func (s *Service) Artifact(id string) (*Artifact, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	artifact, ok := s.artifacts[id]
-	return artifact, ok
+	entry, ok := s.artifacts[id]
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(entry.expiresAt) {
+		delete(s.artifacts, id)
+		return nil, false
+	}
+	return entry.artifact, true
 }
 
 func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report, error) {
@@ -97,7 +117,7 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 		ResolvedDigest:      resolvedDigest,
 		Canonical:           ref.Registry + "/" + ref.Repository + "@" + resolvedDigest,
 		InspectedAt:         start,
-		VerificationMessage: "Decoded metadata",
+		VerificationMessage: "Published metadata decoded for inspection",
 	}
 	topLevel := TargetResult{
 		Name:      "Top-level image reference",
@@ -106,86 +126,325 @@ func (s *Service) inspect(ctx context.Context, ref reference.ImageRef) (*Report,
 		MediaType: manifestResp.MediaType,
 		Size:      manifestResp.Size,
 	}
-	s.populateTargetFromManifest(ctx, ref, &topLevel, manifest)
+	s.populateTargetFromManifest(ctx, ref, &topLevel, manifest, manifestResp.Bytes, nil)
 	report.TopLevel = s.inspectTarget(ctx, ref, topLevel)
 
 	if manifest.MediaType == oci.MediaOCIIndex || manifest.MediaType == oci.MediaDockerManifestList || len(manifest.Manifests) > 0 {
-		platformCount := 0
+		var platformDescriptors []oci.Descriptor
 		for _, d := range manifest.Manifests {
 			if d.Platform == nil || d.Platform.OS == "unknown" || d.Platform.Architecture == "unknown" {
 				continue
 			}
-			if platformCount >= s.cfg.MaxPlatforms {
+			if len(platformDescriptors) >= s.cfg.MaxPlatforms {
 				report.Warnings = append(report.Warnings, fmt.Sprintf("Platform list truncated at %d entries.", s.cfg.MaxPlatforms))
 				break
 			}
-			platformCount++
-			platform := TargetResult{
-				Name:         oci.PlatformName(d.Platform),
-				Kind:         "Platform manifest",
-				OS:           d.Platform.OS,
-				Architecture: d.Platform.Architecture,
-				Variant:      d.Platform.Variant,
-				Digest:       d.Digest,
-				MediaType:    d.MediaType,
-				Size:         d.Size,
-			}
-			if _, platformManifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, d.Digest); err == nil {
-				s.populateTargetFromManifest(ctx, ref, &platform, platformManifest)
-			} else {
-				platform.Warnings = append(platform.Warnings, "Platform manifest details could not be loaded.")
-			}
-			report.Platforms = append(report.Platforms, s.inspectTarget(ctx, ref, platform))
+			platformDescriptors = append(platformDescriptors, d)
 		}
+
+		results := make([]TargetResult, len(platformDescriptors))
+		if len(platformDescriptors) <= 1 {
+			for i, d := range platformDescriptors {
+				results[i] = s.inspectPlatformDescriptor(ctx, ref, d)
+			}
+		} else {
+			sem := make(chan struct{}, maxPlatformConcurrency)
+			var wg sync.WaitGroup
+			for i, d := range platformDescriptors {
+				wg.Add(1)
+				go func(idx int, desc oci.Descriptor) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					results[idx] = s.inspectPlatformDescriptor(ctx, ref, desc)
+				}(i, d)
+			}
+			wg.Wait()
+		}
+		report.Platforms = results
 		s.attachIndexAttestations(ctx, ref, report, manifest.Manifests)
 	} else {
 		report.TopLevel.Kind = "Image manifest"
 	}
 	s.discoverLineage(ctx, ref, report)
-	s.logger.Info("inspection completed", "registry", ref.Registry, "repository", ref.Repository, "digest", resolvedDigest, "duration", time.Since(start))
+	s.logger.Info("inspection completed", "registry", ref.Registry, "repository", ref.Repository, "digest", resolvedDigest, "platforms", len(report.Platforms), "duration", time.Since(start))
 	return report, nil
 }
 
-func (s *Service) populateTargetFromManifest(ctx context.Context, ref reference.ImageRef, target *TargetResult, manifest oci.Manifest) {
+func (s *Service) inspectPlatformDescriptor(ctx context.Context, ref reference.ImageRef, d oci.Descriptor) TargetResult {
+	platform := TargetResult{
+		Name:         oci.PlatformName(d.Platform),
+		Kind:         "Platform manifest",
+		OS:           d.Platform.OS,
+		Architecture: d.Platform.Architecture,
+		Variant:      d.Platform.Variant,
+		Digest:       d.Digest,
+		MediaType:    d.MediaType,
+		Size:         d.Size,
+	}
+	if resp, platformManifest, err := s.registry.GetManifest(ctx, ref.Registry, ref.Repository, d.Digest); err == nil {
+		s.populateTargetFromManifest(ctx, ref, &platform, platformManifest, resp.Bytes, d.Annotations)
+	} else {
+		platform.Warnings = append(platform.Warnings, "Platform manifest details could not be loaded.")
+	}
+	return s.inspectTarget(ctx, ref, platform)
+}
+
+func (s *Service) populateTargetFromManifest(ctx context.Context, ref reference.ImageRef, target *TargetResult, manifest oci.Manifest, rawManifest []byte, descriptorAnnotations map[string]string) {
 	if target.MediaType == "" {
 		target.MediaType = manifest.MediaType
 	}
-	target.Annotations = copyStrings(manifest.Annotations)
-	for _, layer := range manifest.Layers {
-		target.Layers = append(target.Layers, LayerDescriptor{Digest: layer.Digest, MediaType: layer.MediaType, Size: layer.Size})
+	// Merge annotations from index descriptor -> manifest -> config labels (later wins on conflict).
+	mergedAnnotations := map[string]string{}
+	for k, v := range descriptorAnnotations {
+		mergedAnnotations[k] = v
 	}
-	if manifest.Config.Digest == "" || manifest.Config.Size > s.cfg.MaxArtifactBytes {
-		return
+	for k, v := range manifest.Annotations {
+		mergedAnnotations[k] = v
 	}
-	raw, err := s.registry.GetBlob(ctx, ref.Registry, ref.Repository, manifest.Config.Digest, s.cfg.MaxArtifactBytes)
-	if err != nil {
-		return
+
+	if len(rawManifest) > 0 && int64(len(rawManifest)) <= s.cfg.MaxArtifactBytes {
+		target.ManifestArtifactID = s.registerDocumentArtifact(target.Digest, "OCI manifest", "OCI manifest", target.Digest, target.MediaType, rawManifest)
 	}
+
+	var totalLayerBytes int64
+	for i, layer := range manifest.Layers {
+		totalLayerBytes += layer.Size
+		target.Layers = append(target.Layers, LayerDescriptor{
+			Index:          i + 1,
+			Digest:         layer.Digest,
+			MediaType:      layer.MediaType,
+			ShortMediaType: shortLayerMediaType(layer.MediaType),
+			Size:           layer.Size,
+		})
+	}
+	if totalLayerBytes > 0 {
+		for i := range target.Layers {
+			pct := int((target.Layers[i].Size * 100) / totalLayerBytes)
+			if pct == 0 && target.Layers[i].Size > 0 {
+				pct = 1
+			}
+			target.Layers[i].SizePercent = pct
+		}
+	}
+
+	if manifest.Config.Digest != "" && manifest.Config.Size <= s.cfg.MaxArtifactBytes {
+		if raw, err := s.registry.GetBlob(ctx, ref.Registry, ref.Repository, manifest.Config.Digest, s.cfg.MaxArtifactBytes); err == nil {
+			target.ConfigArtifactID = s.registerDocumentArtifact(target.Digest, "Image config", "OCI image configuration", manifest.Config.Digest, manifest.Config.MediaType, raw)
+			s.applyImageConfig(target, raw, mergedAnnotations)
+		}
+	}
+
+	if len(mergedAnnotations) > 0 {
+		target.Annotations = mergedAnnotations
+		if target.Config == nil {
+			target.Config = &ImageConfig{}
+		}
+		target.Config.OCIAnnotations = extractOCIAnnotations(mergedAnnotations)
+	}
+}
+
+func (s *Service) applyImageConfig(target *TargetResult, raw []byte, mergedAnnotations map[string]string) {
 	var configDoc struct {
+		Created      string `json:"created"`
+		Author       string `json:"author"`
 		OS           string `json:"os"`
 		Architecture string `json:"architecture"`
 		Variant      string `json:"variant"`
 		Config       struct {
-			Labels map[string]string `json:"Labels"`
+			User         string              `json:"User"`
+			WorkingDir   string              `json:"WorkingDir"`
+			Entrypoint   []string            `json:"Entrypoint"`
+			Cmd          []string            `json:"Cmd"`
+			Env          []string            `json:"Env"`
+			ExposedPorts map[string]any      `json:"ExposedPorts"`
+			Volumes      map[string]any      `json:"Volumes"`
+			StopSignal   string              `json:"StopSignal"`
+			Labels       map[string]string   `json:"Labels"`
 		} `json:"config"`
+		History []struct {
+			Created    string `json:"created"`
+			CreatedBy  string `json:"created_by"`
+			EmptyLayer bool   `json:"empty_layer"`
+			Comment    string `json:"comment"`
+		} `json:"history"`
 	}
-	if json.Unmarshal(raw, &configDoc) == nil {
-		if target.OS == "" {
-			target.OS = configDoc.OS
-		}
-		if target.Architecture == "" {
-			target.Architecture = configDoc.Architecture
-		}
-		if target.Variant == "" {
-			target.Variant = configDoc.Variant
-		}
-		if target.Annotations == nil {
-			target.Annotations = map[string]string{}
-		}
-		for key, value := range configDoc.Config.Labels {
-			target.Annotations[key] = value
+	if json.Unmarshal(raw, &configDoc) != nil {
+		return
+	}
+	if target.OS == "" {
+		target.OS = configDoc.OS
+	}
+	if target.Architecture == "" {
+		target.Architecture = configDoc.Architecture
+	}
+	if target.Variant == "" {
+		target.Variant = configDoc.Variant
+	}
+	for key, value := range configDoc.Config.Labels {
+		mergedAnnotations[key] = value
+	}
+
+	imgCfg := &ImageConfig{
+		Author:     strings.TrimSpace(configDoc.Author),
+		User:       strings.TrimSpace(configDoc.Config.User),
+		WorkingDir: strings.TrimSpace(configDoc.Config.WorkingDir),
+		Entrypoint: configDoc.Config.Entrypoint,
+		Cmd:        configDoc.Config.Cmd,
+		StopSignal: strings.TrimSpace(configDoc.Config.StopSignal),
+	}
+	if t, err := time.Parse(time.RFC3339Nano, configDoc.Created); err == nil {
+		imgCfg.Created = t.UTC()
+	}
+	for port := range configDoc.Config.ExposedPorts {
+		imgCfg.ExposedPorts = append(imgCfg.ExposedPorts, port)
+	}
+	sort.Strings(imgCfg.ExposedPorts)
+	for vol := range configDoc.Config.Volumes {
+		imgCfg.Volumes = append(imgCfg.Volumes, vol)
+	}
+	sort.Strings(imgCfg.Volumes)
+
+	for _, envLine := range configDoc.Config.Env {
+		k, v, ok := strings.Cut(envLine, "=")
+		if ok {
+			imgCfg.Env = append(imgCfg.Env, oci.KV{Key: k, Value: v})
+		} else if strings.TrimSpace(envLine) != "" {
+			imgCfg.Env = append(imgCfg.Env, oci.KV{Key: envLine, Value: ""})
 		}
 	}
+
+	labelKeys := make([]string, 0, len(configDoc.Config.Labels))
+	for k := range configDoc.Config.Labels {
+		labelKeys = append(labelKeys, k)
+	}
+	sort.Strings(labelKeys)
+	for _, k := range labelKeys {
+		imgCfg.Labels = append(imgCfg.Labels, oci.KV{Key: k, Value: configDoc.Config.Labels[k]})
+	}
+
+	// Align non-empty history entries to filesystem layers in order.
+	nonEmptyIdx := 0
+	for _, h := range configDoc.History {
+		entry := HistoryEntry{
+			Command:    cleanHistoryCommand(h.CreatedBy),
+			RawCommand: strings.TrimSpace(h.CreatedBy),
+			EmptyLayer: h.EmptyLayer,
+			Comment:    strings.TrimSpace(h.Comment),
+		}
+		if t, err := time.Parse(time.RFC3339Nano, h.Created); err == nil {
+			entry.Created = t.UTC()
+		}
+		if !h.EmptyLayer {
+			if nonEmptyIdx < len(target.Layers) {
+				entry.LayerIndex = nonEmptyIdx + 1
+				target.Layers[nonEmptyIdx].Command = entry.Command
+				target.Layers[nonEmptyIdx].RawCommand = entry.RawCommand
+			}
+			nonEmptyIdx++
+		}
+		imgCfg.History = append(imgCfg.History, entry)
+	}
+	target.Config = imgCfg
+}
+
+func cleanHistoryCommand(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	// Strip standard Docker / BuildKit shell wrapper prefixes for human readability.
+	for _, prefix := range []string{
+		"/bin/sh -c #(nop) ",
+		"/bin/sh -c #(nop)",
+		"cmd /S /C #(nop) ",
+		"/bin/sh -c ",
+	} {
+		if strings.HasPrefix(s, prefix) {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(s, prefix))
+			if prefix == "/bin/sh -c " && !strings.HasPrefix(trimmed, "RUN ") {
+				return "RUN " + trimmed
+			}
+			return trimmed
+		}
+	}
+	return s
+}
+
+func shortLayerMediaType(mediaType string) string {
+	lower := strings.ToLower(mediaType)
+	switch {
+	case strings.Contains(lower, "tar+zstd"):
+		return "tar+zstd"
+	case strings.Contains(lower, "tar+gzip") || strings.Contains(lower, "rootfs.diff.tar.gzip"):
+		return "tar+gzip"
+	case strings.HasSuffix(lower, ".tar"):
+		return "tar"
+	case mediaType == "":
+		return "layer"
+	default:
+		if idx := strings.LastIndex(mediaType, "."); idx >= 0 && idx+1 < len(mediaType) {
+			return mediaType[idx+1:]
+		}
+		return mediaType
+	}
+}
+
+func extractOCIAnnotations(annotations map[string]string) []oci.KV {
+	ordered := []struct {
+		key   string
+		label string
+	}{
+		{"org.opencontainers.image.title", "Title"},
+		{"org.opencontainers.image.description", "Description"},
+		{"org.opencontainers.image.version", "Version"},
+		{"org.opencontainers.image.source", "Source repository"},
+		{"org.opencontainers.image.revision", "Revision"},
+		{"org.opencontainers.image.licenses", "Licenses"},
+		{"org.opencontainers.image.url", "URL"},
+		{"org.opencontainers.image.documentation", "Documentation"},
+		{"org.opencontainers.image.authors", "Authors"},
+		{"org.opencontainers.image.vendor", "Vendor"},
+		{"org.opencontainers.image.created", "Created"},
+		{"org.opencontainers.image.base.name", "Declared base"},
+		{"org.opencontainers.image.base.digest", "Declared base digest"},
+	}
+	var out []oci.KV
+	for _, item := range ordered {
+		if val := strings.TrimSpace(annotations[item.key]); val != "" {
+			out = append(out, oci.KV{Key: item.label, Value: val})
+		}
+	}
+	return out
+}
+
+func (s *Service) registerDocumentArtifact(targetDigest, typ, purpose, digest, mediaType string, raw []byte) string {
+	views := oci.BuildPayloadViews(raw, s.cfg.MaxPreviewBytes)
+	artifact := &Artifact{
+		ID:                   oci.MakeID(targetDigest + typ + digest),
+		TargetDigest:         targetDigest,
+		Type:                 typ,
+		Purpose:              purpose,
+		Discovery:            "OCI manifest inspection",
+		Digest:               digest,
+		MediaType:            mediaType,
+		Size:                 int64(len(raw)),
+		RawView:              views.Raw,
+		RawViewTruncated:     views.RawTruncated,
+		DecodedView:          views.Decoded,
+		DecodedViewChanged:   views.DecodedChanged,
+		DecodedViewJSON:      views.DecodedJSON,
+		DecodedViewTruncated: views.DecodedTruncated,
+		DecodedRows:          views.Rows,
+		DecodedRowsTruncated: views.RowsTruncated,
+		Preview:              views.Raw,
+		PreviewTruncated:     views.RawTruncated,
+		Downloadable:         true,
+		Raw:                  raw,
+		VerificationStatus:   "Not applicable",
+	}
+	s.registerArtifact(artifact)
+	return artifact.ID
 }
 
 func (s *Service) attachIndexAttestations(ctx context.Context, ref reference.ImageRef, report *Report, descriptors []oci.Descriptor) {
@@ -233,17 +492,6 @@ func annotationValue(annotations map[string]string, key string) string {
 		}
 	}
 	return ""
-}
-
-func copyStrings(values map[string]string) map[string]string {
-	if len(values) == 0 {
-		return nil
-	}
-	copy := make(map[string]string, len(values))
-	for key, value := range values {
-		copy[key] = value
-	}
-	return copy
 }
 
 func (s *Service) inspectTarget(ctx context.Context, ref reference.ImageRef, target TargetResult) TargetResult {
@@ -355,7 +603,7 @@ func (s *Service) artifactsFromDescriptor(ctx context.Context, ref reference.Ima
 	} else if len(resp.Bytes) > 0 {
 		artifact.Raw = resp.Bytes
 		artifact.Downloadable = true
-		s.setPayloadViews(&artifact, resp.Bytes)
+		s.setPayloadViews(&artifact, resp.Bytes, desc.Annotations)
 		summary, signatures, isSBOM := oci.SummarizeJSON(resp.Bytes)
 		artifact.Summary = append(artifact.Summary, summary...)
 		artifact.Signatures = append(artifact.Signatures, signatures...)
@@ -410,7 +658,7 @@ func (s *Service) artifactsFromManifestLayers(ctx context.Context, ref reference
 		}
 		artifact.Raw = raw
 		artifact.Downloadable = true
-		s.setPayloadViews(&artifact, raw)
+		s.setPayloadViews(&artifact, raw, layer.Annotations)
 		addDescriptorAnnotationDetails(&artifact, layer.Annotations)
 		summary, signatures, isSBOM := oci.SummarizeArtifactPayload(raw, layer.MediaType)
 		artifact.Summary = append(artifact.Summary, summary...)
@@ -423,7 +671,7 @@ func (s *Service) artifactsFromManifestLayers(ctx context.Context, ref reference
 	return artifacts
 }
 
-func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {
+func (s *Service) setPayloadViews(artifact *Artifact, raw []byte, annotations map[string]string) {
 	views := oci.BuildPayloadViews(raw, s.cfg.MaxPreviewBytes)
 	artifact.RawView = views.Raw
 	artifact.RawViewTruncated = views.RawTruncated
@@ -436,7 +684,9 @@ func (s *Service) setPayloadViews(artifact *Artifact, raw []byte) {
 	artifact.Preview = views.Raw
 	artifact.PreviewTruncated = views.RawTruncated
 	analyzeArtifact(artifact)
-	artifact.VerificationStatus = "Not verified"
+	artifact.Verification = verify.Artifact(raw, annotations, artifact.TargetDigest, artifact.ClaimedDigests)
+	artifact.VerificationStatus = artifact.Verification.DisplayLabel()
+	enrichSignatureFromVerification(artifact)
 }
 
 func addDescriptorAnnotationDetails(artifact *Artifact, annotations map[string]string) {
@@ -445,7 +695,7 @@ func addDescriptorAnnotationDetails(artifact *Artifact, annotations map[string]s
 		switch {
 		case strings.Contains(lower, "signature") && strings.TrimSpace(v) != "":
 			artifact.Signatures = append(artifact.Signatures, oci.KV{Key: k, Value: oci.CompactString(v, 120)})
-		case strings.Contains(lower, "certificate"):
+		case strings.Contains(lower, "certificate") || strings.HasSuffix(lower, "/cert") || lower == "cert":
 			artifact.Summary = append(artifact.Summary, oci.KV{Key: k, Value: "present"})
 			artifact.Summary = append(artifact.Summary, oci.CertificateSummary(v)...)
 		case strings.Contains(lower, "bundle") || strings.Contains(lower, "chain"):
@@ -459,8 +709,22 @@ func (s *Service) registerArtifact(artifact *Artifact) {
 		artifact.ID = oci.MakeID(artifact.TargetDigest + artifact.Type + artifact.Digest + artifact.Discovery)
 	}
 	s.mu.Lock()
-	s.artifacts[artifact.ID] = artifact
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if len(s.artifacts) >= maxRetainedArtifacts {
+		for k, entry := range s.artifacts {
+			if now.After(entry.expiresAt) {
+				delete(s.artifacts, k)
+			}
+		}
+		if len(s.artifacts) >= maxRetainedArtifacts {
+			for k := range s.artifacts {
+				delete(s.artifacts, k)
+				break
+			}
+		}
+	}
+	s.artifacts[artifact.ID] = retainedArtifact{artifact: artifact, expiresAt: now.Add(artifactRetentionTTL)}
 }
 
 func (s *Service) addArtifact(target *TargetResult, artifact Artifact) {

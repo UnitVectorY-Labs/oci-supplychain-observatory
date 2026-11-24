@@ -1,0 +1,89 @@
+{{define "payloadRows"}}
+{{range .}}
+<tr>
+  <td class="payload-key {{.DepthClass}}">{{.DisplayKey}}</td>
+  <td class="payload-val">
+    {{if .DecodedRows}}
+    <details class="uvy-disclosure">
+      <summary>{{.Type}} — inspect decoded fields</summary>
+      <div class="uvy-disclosure__body nested-payload-box">
+        <div class="table-wrap" role="region" tabindex="0">
+          <table class="payload-tree-table uvy-table--compact">
+            <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
+          </table>
+        </div>
+        {{if .Raw}}
+        <details class="uvy-disclosure">
+          <summary>Raw encoded value</summary>
+          <div class="uvy-disclosure__body">
+            <pre><code>{{.Raw}}</code></pre>
+          </div>
+        </details>
+        {{end}}
+      </div>
+    </details>
+    {{else if .Value}}
+      {{.Value}}
+    {{else}}
+      <span class="uvy-badge">{{.Type}}</span>
+    {{end}}
+  </td>
+</tr>
+{{end}}
+{{end}}
+
+{{define "payload-view"}}
+<div class="payload-box">
+  <div class="uvy-tabs" role="tablist" aria-label="Artifact payload views">
+    <button id="pl-{{.ID}}-tab-decoded" role="tab" type="button" aria-selected="true" aria-controls="pl-{{.ID}}-panel-decoded">Decoded JSON</button>
+    {{if .DecodedRows}}<button id="pl-{{.ID}}-tab-tree" role="tab" type="button" aria-selected="false" aria-controls="pl-{{.ID}}-panel-tree">Structured fields</button>{{end}}
+    <button id="pl-{{.ID}}-tab-raw" role="tab" type="button" aria-selected="false" aria-controls="pl-{{.ID}}-panel-raw">Raw payload</button>
+  </div>
+
+  <div id="pl-{{.ID}}-panel-decoded" role="tabpanel" aria-labelledby="pl-{{.ID}}-tab-decoded">
+    {{if .DecodedView}}
+      {{if .DecodedViewTruncated}}<p class="uvy-hint">Preview truncated to the configured byte limit. Download the raw artifact for the complete payload.</p>{{end}}
+      <div class="uvy-code payload-code">
+        <div class="uvy-code__bar">
+          <span>{{if .DecodedViewChanged}}decoded (embedded base64 &amp; certificates expanded){{else}}formatted JSON{{end}}</span>
+          <button type="button" class="uvy-button--quiet uvy-button--small uvy-copy" data-copy-target="pl-code-decoded-{{.ID}}" data-enable-with-js disabled aria-label="Copy decoded JSON">{{template "copy-button-text"}}</button>
+        </div>
+        <pre tabindex="0"><code id="pl-code-decoded-{{.ID}}">{{.DecodedView}}</code></pre>
+      </div>
+    {{else}}
+      <div class="uvy-empty">
+        <strong>Not structured JSON</strong>
+        <p>View the raw payload tab or download the artifact directly.</p>
+      </div>
+    {{end}}
+  </div>
+
+  {{if .DecodedRows}}
+  <div id="pl-{{.ID}}-panel-tree" role="tabpanel" aria-labelledby="pl-{{.ID}}-tab-tree" hidden>
+    {{if .DecodedRowsTruncated}}<p class="uvy-hint">Structured field list truncated at 2,000 rows.</p>{{end}}
+    <div class="table-wrap" role="region" aria-label="Decoded payload fields" tabindex="0">
+      <table class="payload-tree-table uvy-table--compact">
+        <thead>
+          <tr>
+            <th scope="col">Field</th>
+            <th scope="col">Value</th>
+          </tr>
+        </thead>
+        <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
+      </table>
+    </div>
+  </div>
+  {{end}}
+
+  <div id="pl-{{.ID}}-panel-raw" role="tabpanel" aria-labelledby="pl-{{.ID}}-tab-raw" hidden>
+    {{if .RawViewTruncated}}<p class="uvy-hint">Raw preview truncated to the configured byte limit. Download the artifact for the full file.</p>{{end}}
+    <div class="uvy-code payload-code">
+      <div class="uvy-code__bar">
+        <span>{{if .MediaType}}{{.MediaType}}{{else}}raw payload{{end}} · {{bytes .Size}}</span>
+        <button type="button" class="uvy-button--quiet uvy-button--small uvy-copy" data-copy-target="pl-code-raw-{{.ID}}" data-enable-with-js disabled aria-label="Copy raw payload">{{template "copy-button-text"}}</button>
+      </div>
+      <pre tabindex="0"><code id="pl-code-raw-{{.ID}}">{{.RawView}}</code></pre>
+    </div>
+  </div>
+</div>
+{{end}}

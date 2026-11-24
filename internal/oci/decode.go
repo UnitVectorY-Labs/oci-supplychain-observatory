@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,6 +28,55 @@ func (kv KV) Link() string {
 		return ""
 	}
 	return parsed.String()
+}
+
+type CertificateInfo struct {
+	SerialNumber       string
+	Subject            string
+	Issuer             string
+	NotBefore          time.Time
+	NotAfter           time.Time
+	SignatureAlgorithm string
+	PublicKeyAlgorithm string
+	URIs               []string
+	Emails             []string
+	DNSNames           []string
+	OIDCIssuer         string
+	BuildSignerURI     string
+	BuildConfigURI     string
+	SourceRepoURI      string
+	SourceRepoDigest   string
+	SourceRepoRef      string
+	WorkflowName       string
+	WorkflowRepo       string
+	WorkflowRef        string
+	WorkflowTrigger    string
+	RunnerEnvironment  string
+}
+
+func (c *CertificateInfo) PrimaryIdentity() string {
+	if c == nil {
+		return ""
+	}
+	if len(c.URIs) > 0 {
+		return c.URIs[0]
+	}
+	if len(c.Emails) > 0 {
+		return c.Emails[0]
+	}
+	if len(c.DNSNames) > 0 {
+		return c.DNSNames[0]
+	}
+	if c.BuildSignerURI != "" {
+		return c.BuildSignerURI
+	}
+	return c.Subject
+}
+
+type RekorEntry struct {
+	LogIndex       string
+	IntegratedTime time.Time
+	LogID          string
 }
 
 type PayloadViews struct {
@@ -252,42 +302,210 @@ func summarizeNested(payload string) ([]KV, []KV, bool) {
 	return nil, nil, false
 }
 
-func CertificateSummary(rawBase64 string) []KV {
-	certText := strings.TrimSpace(rawBase64)
+func ParseX509Certificate(raw string) (*x509.Certificate, error) {
+	certText := strings.TrimSpace(raw)
+	if certText == "" {
+		return nil, fmt.Errorf("empty certificate")
+	}
 	var der []byte
 	if block, _ := pem.Decode([]byte(certText)); block != nil {
 		der = block.Bytes
 	} else {
-		decoded, err := base64.StdEncoding.DecodeString(certText)
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(certText)
+		var err error
+		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+			if decoded, decErr := enc.DecodeString(certText); decErr == nil {
+				der = decoded
+				err = nil
+				break
+			} else {
+				err = decErr
+			}
 		}
 		if err != nil {
-			return []KV{{"Signing certificate", "present, but could not decode"}}
+			return nil, err
 		}
-		der = decoded
 	}
-	cert, err := x509.ParseCertificate(der)
+	return x509.ParseCertificate(der)
+}
+
+func ParseCertificate(raw string) (*CertificateInfo, bool) {
+	cert, err := ParseX509Certificate(raw)
 	if err != nil {
+		return nil, false
+	}
+	info := &CertificateInfo{
+		SerialNumber:       cert.SerialNumber.String(),
+		Subject:            cert.Subject.String(),
+		Issuer:             cert.Issuer.String(),
+		NotBefore:          cert.NotBefore.UTC(),
+		NotAfter:           cert.NotAfter.UTC(),
+		SignatureAlgorithm: cert.SignatureAlgorithm.String(),
+		PublicKeyAlgorithm: cert.PublicKeyAlgorithm.String(),
+	}
+	for _, u := range cert.URIs {
+		info.URIs = append(info.URIs, u.String())
+	}
+	info.Emails = append(info.Emails, cert.EmailAddresses...)
+	info.DNSNames = append(info.DNSNames, cert.DNSNames...)
+
+	for _, ext := range cert.Extensions {
+		val := decodeFulcioExtensionValue(ext.Value)
+		if val == "" {
+			continue
+		}
+		switch ext.Id.String() {
+		case "1.3.6.1.4.1.57264.1.1":
+			if info.OIDCIssuer == "" {
+				info.OIDCIssuer = val
+			}
+		case "1.3.6.1.4.1.57264.1.8":
+			info.OIDCIssuer = val
+		case "1.3.6.1.4.1.57264.1.2":
+			info.WorkflowTrigger = val
+		case "1.3.6.1.4.1.57264.1.4":
+			info.WorkflowName = val
+		case "1.3.6.1.4.1.57264.1.5":
+			info.WorkflowRepo = val
+		case "1.3.6.1.4.1.57264.1.6":
+			info.WorkflowRef = val
+		case "1.3.6.1.4.1.57264.1.9":
+			info.BuildSignerURI = val
+		case "1.3.6.1.4.1.57264.1.12":
+			info.SourceRepoURI = val
+		case "1.3.6.1.4.1.57264.1.13":
+			info.SourceRepoDigest = val
+		case "1.3.6.1.4.1.57264.1.14":
+			info.SourceRepoRef = val
+		case "1.3.6.1.4.1.57264.1.18":
+			info.RunnerEnvironment = val
+		case "1.3.6.1.4.1.57264.1.20":
+			info.BuildConfigURI = val
+		}
+	}
+	return info, true
+}
+
+func decodeFulcioExtensionValue(raw []byte) string {
+	var str string
+	if rest, err := asn1.Unmarshal(raw, &str); err == nil && len(rest) == 0 && strings.TrimSpace(str) != "" {
+		return strings.TrimSpace(str)
+	}
+	// Fulcio v1 extensions (1.1..1.6) were historically raw UTF-8 bytes without ASN.1 string wrapper.
+	text := strings.TrimSpace(string(raw))
+	for _, r := range text {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return text
+}
+
+func CertificateSummary(rawBase64 string) []KV {
+	info, ok := ParseCertificate(rawBase64)
+	if !ok {
 		return []KV{{"Signing certificate", "present, but could not parse"}}
 	}
 	out := []KV{{"Signing certificate", "present"}}
-	if cert.Subject.String() != "" {
-		out = append(out, KV{"Certificate subject", cert.Subject.String()})
+	if id := info.PrimaryIdentity(); id != "" {
+		out = append(out, KV{"Certificate identity", id})
 	}
-	if cert.Issuer.String() != "" {
-		out = append(out, KV{"Certificate issuer", cert.Issuer.String()})
+	if info.Subject != "" {
+		out = append(out, KV{"Certificate subject", info.Subject})
 	}
-	for _, ext := range cert.Extensions {
-		if ext.Id.String() == "1.3.6.1.4.1.57264.1.1" {
-			var issuer string
-			if _, err := asn1.Unmarshal(ext.Value, &issuer); err == nil && issuer != "" {
-				out = append(out, KV{"OIDC issuer", issuer})
+	if info.Issuer != "" {
+		out = append(out, KV{"Certificate issuer", info.Issuer})
+	}
+	if info.OIDCIssuer != "" {
+		out = append(out, KV{"OIDC issuer", info.OIDCIssuer})
+	}
+	if info.SourceRepoURI != "" {
+		out = append(out, KV{"Certificate source repository", info.SourceRepoURI})
+	}
+	if info.WorkflowRef != "" {
+		out = append(out, KV{"Certificate workflow ref", info.WorkflowRef})
+	}
+	if info.RunnerEnvironment != "" {
+		out = append(out, KV{"Certificate runner environment", info.RunnerEnvironment})
+	}
+	out = append(out,
+		KV{"Certificate valid from", info.NotBefore.Format(time.RFC3339)},
+		KV{"Certificate valid until", info.NotAfter.Format(time.RFC3339)},
+	)
+	return out
+}
+
+func ExtractRekorInfo(raw []byte, annotations map[string]string) *RekorEntry {
+	var doc map[string]any
+	if len(raw) > 0 && json.Unmarshal(raw, &doc) == nil {
+		if material, ok := doc["verificationMaterial"].(map[string]any); ok {
+			if entries, ok := material["tlogEntries"].([]any); ok && len(entries) > 0 {
+				if entry, ok := entries[0].(map[string]any); ok {
+					return parseRekorMap(entry)
+				}
 			}
 		}
 	}
-	out = append(out, KV{"Certificate valid from", cert.NotBefore.Format(time.RFC3339)}, KV{"Certificate valid until", cert.NotAfter.Format(time.RFC3339)})
-	return out
+	for k, v := range annotations {
+		if strings.Contains(strings.ToLower(k), "bundle") && strings.TrimSpace(v) != "" {
+			var bundle map[string]any
+			if json.Unmarshal([]byte(v), &bundle) == nil {
+				if payload, ok := bundle["Payload"].(map[string]any); ok {
+					if entry := parseRekorMap(payload); entry != nil {
+						return entry
+					}
+				}
+				if entry := parseRekorMap(bundle); entry != nil {
+					return entry
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func parseRekorMap(m map[string]any) *RekorEntry {
+	var entry RekorEntry
+	if idx, ok := m["logIndex"]; ok {
+		entry.LogIndex = formatJSONNumber(idx)
+	}
+	if rawTime, ok := m["integratedTime"]; ok {
+		if sec, err := parseUnixSeconds(rawTime); err == nil && sec > 0 {
+			entry.IntegratedTime = time.Unix(sec, 0).UTC()
+		}
+	}
+	if id, ok := m["logID"].(string); ok {
+		entry.LogID = id
+	} else if logIDMap, ok := m["logId"].(map[string]any); ok {
+		if keyID, ok := logIDMap["keyId"].(string); ok {
+			entry.LogID = keyID
+		}
+	}
+	if entry.LogIndex == "" && entry.IntegratedTime.IsZero() && entry.LogID == "" {
+		return nil
+	}
+	return &entry
+}
+
+func formatJSONNumber(v any) string {
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case float64:
+		return strconv.FormatInt(int64(x), 10)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func parseUnixSeconds(v any) (int64, error) {
+	switch x := v.(type) {
+	case float64:
+		return int64(x), nil
+	case string:
+		return strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+	default:
+		return 0, fmt.Errorf("unsupported time")
+	}
 }
 
 func DecodeBase64JSON(s string) ([]byte, bool) {
@@ -375,62 +593,55 @@ func isStructuredJSON(b []byte) bool {
 }
 
 func DecodeCertificateDetails(rawBase64 string) map[string]any {
-	certText := strings.TrimSpace(rawBase64)
-	var der []byte
-	if block, _ := pem.Decode([]byte(certText)); block != nil {
-		der = block.Bytes
-	} else {
-		decoded, err := base64.StdEncoding.DecodeString(certText)
-		if err != nil {
-			decoded, err = base64.RawStdEncoding.DecodeString(certText)
-		}
-		if err != nil {
-			return nil
-		}
-		der = decoded
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
+	info, ok := ParseCertificate(rawBase64)
+	if !ok {
 		return nil
 	}
 
 	out := map[string]any{
-		"serialNumber":       cert.SerialNumber.String(),
-		"issuer":             cert.Issuer.String(),
-		"subject":            cert.Subject.String(),
-		"notBefore":          cert.NotBefore.Format(time.RFC3339),
-		"notAfter":           cert.NotAfter.Format(time.RFC3339),
-		"signatureAlgorithm": cert.SignatureAlgorithm.String(),
-		"publicKeyAlgorithm": cert.PublicKeyAlgorithm.String(),
+		"serialNumber":       info.SerialNumber,
+		"issuer":             info.Issuer,
+		"subject":            info.Subject,
+		"notBefore":          info.NotBefore.Format(time.RFC3339),
+		"notAfter":           info.NotAfter.Format(time.RFC3339),
+		"signatureAlgorithm": info.SignatureAlgorithm,
+		"publicKeyAlgorithm": info.PublicKeyAlgorithm,
 	}
-	if len(cert.URIs) > 0 {
-		values := make([]any, 0, len(cert.URIs))
-		for _, u := range cert.URIs {
-			values = append(values, u.String())
+	if len(info.URIs) > 0 {
+		values := make([]any, 0, len(info.URIs))
+		for _, u := range info.URIs {
+			values = append(values, u)
 		}
 		out["uriSANs"] = values
 	}
-	if len(cert.DNSNames) > 0 {
-		values := make([]any, 0, len(cert.DNSNames))
-		for _, name := range cert.DNSNames {
+	if len(info.DNSNames) > 0 {
+		values := make([]any, 0, len(info.DNSNames))
+		for _, name := range info.DNSNames {
 			values = append(values, name)
 		}
 		out["dnsSANs"] = values
 	}
-	if len(cert.EmailAddresses) > 0 {
-		values := make([]any, 0, len(cert.EmailAddresses))
-		for _, email := range cert.EmailAddresses {
+	if len(info.Emails) > 0 {
+		values := make([]any, 0, len(info.Emails))
+		for _, email := range info.Emails {
 			values = append(values, email)
 		}
 		out["emailSANs"] = values
 	}
-	for _, ext := range cert.Extensions {
-		if ext.Id.String() == "1.3.6.1.4.1.57264.1.1" {
-			var issuer string
-			if _, err := asn1.Unmarshal(ext.Value, &issuer); err == nil && issuer != "" {
-				out["oidcIssuer"] = issuer
-			}
-		}
+	if info.OIDCIssuer != "" {
+		out["oidcIssuer"] = info.OIDCIssuer
+	}
+	if info.BuildSignerURI != "" {
+		out["buildSignerURI"] = info.BuildSignerURI
+	}
+	if info.SourceRepoURI != "" {
+		out["sourceRepositoryURI"] = info.SourceRepoURI
+	}
+	if info.SourceRepoRef != "" {
+		out["sourceRepositoryRef"] = info.SourceRepoRef
+	}
+	if info.RunnerEnvironment != "" {
+		out["runnerEnvironment"] = info.RunnerEnvironment
 	}
 	return out
 }

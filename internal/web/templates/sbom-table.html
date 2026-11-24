@@ -1,0 +1,68 @@
+{{define "sbom-table"}}
+<div id="sbom-results-{{.ArtifactID}}" class="sbom-results">
+  <div class="meta-strip">
+    <span class="uvy-count" role="status">
+      {{if eq .TotalMatched 0}}0 packages matched{{else}}Showing {{.StartRow}}–{{.EndRow}} of {{.TotalMatched}} package{{if ne .TotalMatched 1}}s{{end}}{{if ne .TotalMatched .TotalAll}} (filtered from {{.TotalAll}}{{if .Capped}}+{{end}}){{end}}{{end}}
+    </span>
+    {{if .Capped}}<span class="uvy-badge">Indexed first 10,000 entries</span>{{end}}
+  </div>
+
+  {{if .Items}}
+  <div class="table-wrap" role="region" aria-label="SBOM package inventory" tabindex="0">
+    <table class="uvy-table--comparison uvy-table--interactive">
+      <caption class="sr-only">Published SBOM package inventory</caption>
+      <thead>
+        <tr>
+          <th scope="col">Package</th>
+          <th scope="col">Version</th>
+          <th scope="col">Ecosystem</th>
+          <th scope="col">License</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Items}}
+        <tr>
+          <th scope="row" title="{{.PURL}}">
+            {{if .Name}}<code>{{.Name}}</code>{{else}}<span class="uvy-unknown">Unnamed</span>{{end}}
+            {{if .Supplier}}<span class="pkg-supplier">{{.Supplier}}</span>{{end}}
+          </th>
+          <td>{{if .Version}}<code>{{.Version}}</code>{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+          <td>{{if .Ecosystem}}<span class="uvy-badge">{{.Ecosystem}}</span>{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+          <td>{{if .License}}<span class="uvy-badge">{{.License}}</span>{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  {{if gt .TotalPages 1}}
+  <div class="sbom-pagination">
+    <span class="uvy-count">Page {{.Page}} of {{.TotalPages}}</span>
+    <div class="uvy-actions">
+      {{if .HasPrev}}
+      <button type="button" class="uvy-button--small"
+        hx-get="/artifacts/{{.ArtifactID}}/packages?q={{queryEscape .Query}}&amp;ecosystem={{queryEscape .Ecosystem}}&amp;license={{queryEscape .License}}&amp;page={{.PrevPage}}"
+        hx-target="#sbom-results-{{.ArtifactID}}"
+        hx-swap="outerHTML">Previous</button>
+      {{else}}
+      <button type="button" class="uvy-button--small" disabled>Previous</button>
+      {{end}}
+      {{if .HasNext}}
+      <button type="button" class="uvy-button--small"
+        hx-get="/artifacts/{{.ArtifactID}}/packages?q={{queryEscape .Query}}&amp;ecosystem={{queryEscape .Ecosystem}}&amp;license={{queryEscape .License}}&amp;page={{.NextPage}}"
+        hx-target="#sbom-results-{{.ArtifactID}}"
+        hx-swap="outerHTML">Next</button>
+      {{else}}
+      <button type="button" class="uvy-button--small" disabled>Next</button>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+  {{else}}
+  <div class="uvy-empty">
+    <strong>No packages match your filter</strong>
+    <p>Clear the search query or filter selections to view all published packages.</p>
+  </div>
+  {{end}}
+</div>
+{{end}}

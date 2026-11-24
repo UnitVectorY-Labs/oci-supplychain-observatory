@@ -1,69 +1,683 @@
 {{if .Loading}}
-<section id="inspection-panel" class="section-card loading-section" hx-get="/inspect/jobs/{{.Loading.JobID}}" hx-trigger="load delay:150ms, every 1s" hx-swap="outerHTML">
-  <div class="loading-content">
-    <div class="loading-spinner"></div>
+<section id="inspection-panel" class="uvy-panel" hx-get="/inspect/jobs/{{.Loading.JobID}}" hx-trigger="load delay:150ms, every 1s" hx-swap="outerHTML" data-polling>
+  <div class="loading-row" data-polling-active>
+    <span class="uvy-spinner" aria-hidden="true"></span>
     <div>
-      <h2>Loading registry metadata</h2>
-      <p>Resolving the image reference and discovering published supply-chain artifacts.</p>
+      <h2>Inspecting registry metadata</h2>
+      <p class="uvy-hint">Resolving immutable digest, platform manifests, OCI referrers, Cosign attachments, and base-image lineage for <code>{{.Loading.Input}}</code>.</p>
+    </div>
+  </div>
+  <div class="uvy-alert uvy-alert--danger" data-polling-error hidden>
+    <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-circle"></use></svg>
+    <div>
+      <strong>Connection interrupted:</strong> Could not retrieve inspection status.
+      <div class="uvy-actions">
+        <a class="uvy-button uvy-button--small" href="{{inspectURL .Loading.Input}}">
+          <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-refresh"></use></svg>
+          Retry inspection
+        </a>
+      </div>
     </div>
   </div>
 </section>
 {{else if .Error}}
-<section id="inspection-panel" class="error-card">
-  <h2>{{.Error.Title}}</h2>
-  <p>{{.Error.Message}}</p>
+<section id="inspection-panel" aria-label="Inspection error">
+  <div class="uvy-alert uvy-alert--danger">
+    <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-circle"></use></svg>
+    <div>
+      <strong>{{.Error.Title}}:</strong> {{.Error.Message}}
+    </div>
+  </div>
 </section>
 {{else}}
 {{with .Report}}
+{{$report := .}}
 {{$default := .DefaultTargetID}}
 {{$other := .HasOtherMetadata}}
-<section id="inspection-panel" data-default-target="{{$default}}">
-  <section class="report-overview" aria-label="Inspection metadata">
-    <div>
-      <p class="eyebrow">Resolved image</p>
-      <p class="report-reference">{{.Registry}} / {{.Repository}}</p><details class="digest-disclosure"><summary class="mono">{{shortDigest .ResolvedDigest}}</summary><p class="mono digest-value">{{.Canonical}}</p><button type="button" class="text-button" data-copy="{{.Canonical}}">Copy immutable reference</button></details>
+<div id="inspection-panel" class="uvy-stack" data-default-target="{{$default}}">
+  <section class="uvy-panel" aria-label="Resolved immutable image reference">
+    <div class="uvy-panel__header">
+      <h2>Resolved immutable reference</h2>
+      <span class="uvy-count">
+        {{if .FromCache}}Cached · {{else}}Inspected · {{end}}
+        <time datetime="{{formatISO .InspectedAt}}">{{formatUTC .InspectedAt}}</time>
+      </span>
     </div>
-    <dl class="overview-facts">
-      <div><dt>Platforms</dt><dd>{{.PlatformCount}}</dd></div>
-      <div><dt>Artifacts</dt><dd>{{.ArtifactCount}}</dd></div>
-      <div><dt>Build inputs</dt><dd>{{len .BuildInputs}}</dd></div>
-    </dl>
+    <div class="uvy-output">
+      <span class="code-break"><span class="uvy-output__prompt" aria-hidden="true">&gt;</span><output id="canonical-ref">{{.Canonical}}</output></span>
+      <button type="button" class="uvy-button--quiet uvy-button--small uvy-copy" data-copy-target="canonical-ref" data-enable-with-js disabled aria-label="Copy immutable reference">{{template "copy-button-text"}}</button>
+    </div>
+    <div class="meta-strip">
+      <span class="uvy-badge">{{.Registry}}</span>
+      <span class="uvy-badge">{{.TopLevel.Kind}}</span>
+      {{if .Tag}}<span class="uvy-badge">tag: {{.Tag}}</span>{{end}}
+      <span class="uvy-hint">Tags are resolved to immutable <code>sha256</code> digests before discovery.</span>
+    </div>
   </section>
 
-  <p class="report-context">{{if .FromCache}}Cached inspection{{else}}Inspected{{end}} {{.InspectedAt.UTC.Format "02 Jan 2006 · 15:04 UTC"}} · Tags resolved to immutable digests.</p>
-  <p class="trust-note"><strong>Evidence, not a trust verdict.</strong> Published metadata is decoded for inspection. Signatures and attestations are not cryptographically verified or evaluated against a trust policy.</p>
+  <div class="uvy-alert">
+    <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-info-circle"></use></svg>
+    <div>
+      <strong>Evidence, not a policy verdict.</strong> Published registry metadata is decoded for inspection. Embedded signature checks validate cryptographic integrity against the attached certificate only; certificate chains, transparency-log proofs, and trust policies are not evaluated.
+    </div>
+  </div>
+
   {{if .Warnings}}
-  <div class="status-row">{{range .Warnings}}<span class="chip warn">{{.}}</span>{{end}}</div>
+  <div class="uvy-alert uvy-alert--warn">
+    <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-triangle"></use></svg>
+    <div>
+      <strong>Inspection warnings:</strong>
+      <ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
+    </div>
+  </div>
   {{end}}
 
-  <section class="report-section" aria-labelledby="coverage-title">
-    <div class="report-section-head">
+  <dl class="uvy-stats" aria-label="Inspection summary metrics">
+    <div><dt>Platforms</dt><dd>{{.PlatformCount}}</dd></div>
+    <div><dt>Signatures</dt><dd>{{.SignatureCount}}</dd></div>
+    <div><dt>Attestations</dt><dd>{{.AttestationCount}}</dd></div>
+    <div><dt>SBOMs</dt><dd>{{.SBOMCount}}</dd></div>
+    <div><dt>Upstream images</dt><dd>{{len .BuildInputs}}</dd></div>
+  </dl>
+
+  {{if .Platforms}}
+  <section class="uvy-panel" aria-labelledby="coverage-title">
+    <div class="uvy-panel__header">
       <div>
-        <p class="eyebrow">Evidence coverage</p>
-        <h2 id="coverage-title">Choose a platform. Follow its evidence.</h2>
+        <h2 id="coverage-title">Platforms &amp; evidence coverage</h2>
+        <p class="uvy-hint" id="coverage-help">Select a row to inspect that manifest&rsquo;s decoded metadata, layers, and lineage below. Index evidence covers the collection; platform evidence describes one build.</p>
       </div>
-      <p class="support-note">Index evidence covers the image collection; platform evidence describes one variant.</p>
+      <span class="uvy-count">Index + {{len .Platforms}} platform{{if ne (len .Platforms) 1}}s{{end}}</span>
     </div>
-    <div class="coverage-table-wrap">
-      <table class="coverage-table">
-        <thead><tr><th>Scope</th><th>Signatures</th><th>Attestations</th><th>SBOM</th>{{if $other}}<th>Other</th>{{end}}<th>Lineage</th></tr></thead>
+    <div class="table-wrap" role="region" aria-label="Platform evidence coverage" tabindex="0" aria-describedby="coverage-help">
+      <table class="uvy-table--comparison uvy-table--interactive">
+        <caption class="sr-only">Supply chain evidence across image index and platform manifests</caption>
+        <thead>
+          <tr>
+            <th scope="col">Scope</th>
+            <th scope="col">Digest</th>
+            <th scope="col">Layers / Size</th>
+            <th scope="col">Signatures</th>
+            <th scope="col">Attestations</th>
+            <th scope="col">SBOM</th>
+            {{if $other}}<th scope="col">Other</th>{{end}}
+            <th scope="col">Runtime base</th>
+          </tr>
+        </thead>
         <tbody>
-          <tr class="{{if eq $default "target-top"}}is-selected{{end}}" data-coverage-row="target-top">
-            <td><button type="button" class="scope-link" data-target-link="target-top" aria-pressed="{{eq $default "target-top"}}">{{.TopLevel.ScopeLabel}}</button></td>
-            <td><span class="chip {{if .TopLevel.Signatures}}found{{else}}neutral{{end}}">{{.TopLevel.SignatureStatus}}</span></td>
-            <td><span class="chip {{if .TopLevel.Attestations}}found{{else}}neutral{{end}}">{{.TopLevel.AttestationStatus}}</span></td>
-            <td><span class="chip {{if .TopLevel.SBOMs}}found{{else}}neutral{{end}}">{{.TopLevel.SBOMStatus}}</span></td>
-            {{if $other}}<td>{{len .TopLevel.OtherArtifacts}}</td>{{end}}
-            <td>{{if .Platforms}}{{len .Platforms}} variants{{else}}{{len .TopLevel.Layers}} layers{{end}}</td>
+          <tr class="{{if eq $default "target-top"}}scope-row--active{{end}}" data-coverage-row="target-top">
+            <th scope="row">
+              <div class="scope-cell">
+                <button type="button" class="scope-select-btn" data-scope-select="target-top" aria-pressed="{{eq $default "target-top"}}">{{.TopLevel.ScopeLabel}}</button>
+              </div>
+            </th>
+            <td><code title="{{.TopLevel.Digest}}">{{shortDigest .TopLevel.Digest}}</code></td>
+            <td class="num">{{len .Platforms}} platforms</td>
+            <td>{{if .TopLevel.Signatures}}<span class="uvy-status {{if .TopLevel.HasValidSignature}}uvy-status--ok{{else}}uvy-status--info{{end}}">{{.TopLevel.SignatureSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            <td>{{if .TopLevel.Attestations}}<span class="uvy-status uvy-status--info">{{.TopLevel.ProvenanceSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            <td>{{if .TopLevel.SBOMs}}<span class="uvy-status uvy-status--info">{{.TopLevel.SBOMSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            {{if $other}}<td class="num">{{len .TopLevel.OtherArtifacts}}</td>{{end}}
+            <td><span class="uvy-unknown">Collection index</span></td>
           </tr>
           {{range $idx, $platform := .Platforms}}
-          <tr class="{{if eq $default (printf "target-platform-%d" $idx)}}is-selected{{end}}" data-coverage-row="target-platform-{{$idx}}">
-            <td><button type="button" class="scope-link" data-target-link="target-platform-{{$idx}}" aria-pressed="{{eq $default (printf "target-platform-%d" $idx)}}">{{$platform.Name}}</button> <a class="scope-digest-link" href="{{inspectURL (printf "%s/%s@%s" $.Report.Registry $.Report.Repository $platform.Digest)}}" aria-label="Inspect {{$platform.Name}} by its immutable digest" title="Inspect this platform alone">↗</a></td>
-            <td><span class="chip {{if $platform.Signatures}}found{{else}}neutral{{end}}">{{$platform.SignatureStatus}}</span></td>
-            <td><span class="chip {{if $platform.Attestations}}found{{else}}neutral{{end}}">{{$platform.AttestationStatus}}</span></td>
-            <td><span class="chip {{if $platform.SBOMs}}found{{else}}neutral{{end}}">{{$platform.SBOMStatus}}</span></td>
-            {{if $other}}<td>{{len $platform.OtherArtifacts}}</td>{{end}}
-            <td>{{if $platform.Base}}<span class="chip found">{{if $platform.Base.SharedLayers}}{{$platform.Base.SharedLayers}} inherited · {{$platform.Base.AddedLayerCount}} added{{else}}Declared base{{end}}</span>{{else}}<span class="chip neutral">Not established</span>{{end}}</td>
+          {{$pid := printf "target-platform-%d" $idx}}
+          <tr class="{{if eq $default $pid}}scope-row--active{{end}}" data-coverage-row="{{$pid}}">
+            <th scope="row">
+              <div class="scope-cell">
+                <button type="button" class="scope-select-btn" data-scope-select="{{$pid}}" aria-pressed="{{eq $default $pid}}">{{$platform.Name}}</button>
+                <a class="scope-digest-link" href="{{inspectURL (printf "%s/%s@%s" $report.Registry $report.Repository $platform.Digest)}}" aria-label="Inspect {{$platform.Name}} digest standalone" title="Inspect {{$platform.Name}} digest standalone">
+                  <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-external-link"></use></svg>
+                </a>
+              </div>
+            </th>
+            <td><code title="{{$platform.Digest}}">{{shortDigest $platform.Digest}}</code></td>
+            <td class="num">{{if $platform.Layers}}{{len $platform.Layers}} layers · {{bytes $platform.LayerBytes}}{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+            <td>{{if $platform.Signatures}}<span class="uvy-status {{if $platform.HasValidSignature}}uvy-status--ok{{else}}uvy-status--info{{end}}">{{$platform.SignatureSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            <td>{{if $platform.Attestations}}<span class="uvy-status uvy-status--info">{{$platform.ProvenanceSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            <td>{{if $platform.SBOMs}}<span class="uvy-status uvy-status--info">{{$platform.SBOMSummaryLabel}}</span>{{else}}<span class="uvy-unknown">None</span>{{end}}</td>
+            {{if $other}}<td class="num">{{len $platform.OtherArtifacts}}</td>{{end}}
+            <td>
+              {{if $platform.Base}}
+                {{if $platform.Base.Inspectable}}
+                  <a href="{{inspectURL $platform.Base.Canonical}}"><code>{{$platform.Base.Reference}}</code></a>
+                {{else}}
+                  <code>{{$platform.Base.Reference}}</code>
+                {{end}}
+                {{if $platform.Base.SharedLayers}}<span class="uvy-count"> ({{$platform.Base.SharedLayers}} base · {{$platform.Base.AddedLayerCount}} added)</span>{{end}}
+              {{else}}
+                <span class="uvy-unknown">Not established</span>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{end}}
+
+  <section id="target-top" data-scope-panel {{if ne $default "target-top"}}hidden{{end}}>
+    {{template "scope-panel" (scopeView "top" $report .TopLevel)}}
+  </section>
+  {{range $idx, $platform := .Platforms}}
+  {{$pid := printf "target-platform-%d" $idx}}
+  <section id="{{$pid}}" data-scope-panel {{if ne $default $pid}}hidden{{end}}>
+    {{template "scope-panel" (scopeView (printf "p%d" $idx) $report $platform)}}
+  </section>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "scope-panel"}}
+{{$sid := .ScopeID}}
+{{$report := .Report}}
+{{$t := .Target}}
+<div class="scope-bar">
+  <div class="scope-bar__title">
+    <h2>{{$t.ScopeLabel}}</h2>
+    <span class="uvy-badge">{{$t.Kind}}</span>
+    <span class="uvy-count">
+      {{if $t.Layers}}{{len $t.Layers}} layer{{if ne (len $t.Layers) 1}}s{{end}} · {{bytes $t.LayerBytes}} compressed · {{end}}{{$t.ArtifactCount}} artifact{{if ne $t.ArtifactCount 1}}s{{end}}
+    </span>
+  </div>
+  <div class="scope-bar__controls">
+    {{if $report.Platforms}}
+    <label for="scope-dropdown-{{$sid}}" class="sr-only">Switch platform scope</label>
+    <select id="scope-dropdown-{{$sid}}" data-scope-dropdown disabled data-enable-with-js>
+      <option value="target-top" {{if eq $sid "top"}}selected{{end}}>{{$report.TopLevel.ScopeLabel}}</option>
+      {{range $i, $p := $report.Platforms}}
+      <option value="target-platform-{{$i}}" {{if eq $sid (printf "p%d" $i)}}selected{{end}}>{{$p.Name}}</option>
+      {{end}}
+    </select>
+    {{end}}
+    {{if ne $sid "top"}}
+    <a class="uvy-button uvy-button--small" href="{{inspectURL (printf "%s/%s@%s" $report.Registry $report.Repository $t.Digest)}}">
+      <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-external-link"></use></svg>
+      Inspect digest standalone
+    </a>
+    {{end}}
+  </div>
+</div>
+
+{{if $t.Warnings}}
+<div class="uvy-alert uvy-alert--warn">
+  <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-triangle"></use></svg>
+  <div><ul>{{range $t.Warnings}}<li>{{.}}</li>{{end}}</ul></div>
+</div>
+{{end}}
+
+<div class="uvy-tabs" role="tablist" aria-label="{{$t.ScopeLabel}} metadata views">
+  <button id="{{$sid}}-tab-overview" role="tab" type="button" aria-selected="true" aria-controls="{{$sid}}-panel-overview">Overview</button>
+  <button id="{{$sid}}-tab-evidence" role="tab" type="button" aria-selected="false" aria-controls="{{$sid}}-panel-evidence">Signatures &amp; Attestations ({{$t.NonSBOMArtifactCount}})</button>
+  <button id="{{$sid}}-tab-sbom" role="tab" type="button" aria-selected="false" aria-controls="{{$sid}}-panel-sbom">SBOM &amp; Packages ({{len $t.SBOMs}})</button>
+  <button id="{{$sid}}-tab-layers" role="tab" type="button" aria-selected="false" aria-controls="{{$sid}}-panel-layers">{{if $t.Layers}}Layers &amp; Lineage ({{len $t.Layers}}){{else}}Lineage &amp; Inputs ({{len $report.BuildInputs}}){{end}}</button>
+  <button id="{{$sid}}-tab-config" role="tab" type="button" aria-selected="false" aria-controls="{{$sid}}-panel-config">Config &amp; Raw Manifest</button>
+</div>
+
+<!-- TAB 1: OVERVIEW -->
+<div id="{{$sid}}-panel-overview" role="tabpanel" aria-labelledby="{{$sid}}-tab-overview" class="uvy-stack">
+  {{if or $t.Base $t.BuildInputs (and (eq $sid "top") $report.BuildInputs)}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-lineage-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-lineage-title" class="with-icon">
+        <svg class="icon icon-accent" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-layers-subtract"></use></svg>
+        Base image &amp; build lineage
+      </h3>
+      {{if $t.Base}}<span class="uvy-status uvy-status--ok">{{join $t.Base.Evidence " + "}}</span>{{else}}<span class="uvy-badge">From provenance</span>{{end}}
+    </div>
+
+    {{if $t.Base}}
+    <div class="lineage-flow">
+      <div class="lineage-node">
+        <span class="uvy-label">Runtime base</span>
+        <span class="lineage-node__ref">{{$t.Base.Reference}}</span>
+        <span class="lineage-node__meta">
+          {{if $t.Base.SharedLayers}}{{$t.Base.SharedLayers}} of {{$t.Base.BaseLayerCount}} base layers inherited{{else}}Declared via OCI base image annotation{{end}}
+        </span>
+        {{if $t.Base.Digest}}<code title="{{$t.Base.Digest}}">{{shortDigest $t.Base.Digest}}</code>{{end}}
+        {{if $t.Base.Inspectable}}
+        <div><a class="uvy-button uvy-button--small" href="{{inspectURL $t.Base.Canonical}}">Inspect base image</a></div>
+        {{else if eq $t.Base.Reference "scratch"}}
+        <span class="uvy-hint">Built from <code>scratch</code> (empty base image).</span>
+        {{else}}
+        <span class="uvy-hint">Outside allowed registries or missing immutable digest.</span>
+        {{end}}
+      </div>
+      <div class="lineage-arrow" aria-hidden="true">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-arrow-right"></use></svg>
+      </div>
+      <div class="lineage-node lineage-node--current">
+        <span class="uvy-label">Inspected image</span>
+        <span class="lineage-node__ref">{{$report.Repository}} ({{$t.ScopeLabel}})</span>
+        <span class="lineage-node__meta">
+          {{if $t.Base.SharedLayers}}{{$t.Base.AddedLayerCount}} added layer{{if ne $t.Base.AddedLayerCount 1}}s{{end}} · {{bytes $t.LayerBytes}} total{{else}}{{len $t.Layers}} layers · {{bytes $t.LayerBytes}} total{{end}}
+        </span>
+        <code title="{{$t.Digest}}">{{shortDigest $t.Digest}}</code>
+      </div>
+    </div>
+    {{end}}
+
+    {{$inputs := $t.BuildInputs}}
+    {{if and (eq $sid "top") (not $inputs)}}{{$inputs = $report.BuildInputs}}{{end}}
+    {{if $inputs}}
+    <ul class="uvy-list">
+      {{range $inputs}}
+      <li>
+        <div class="uvy-list__item">
+          <div class="uvy-list__primary">
+            <div><code>{{.Reference}}</code> <span class="uvy-badge">{{.Role}}</span></div>
+            <span class="uvy-list__meta">
+              {{join .Evidence " · "}}{{if .Digest}} · {{shortDigest .Digest}}{{end}}{{if .SharedLayers}} · {{.SharedLayers}} shared layers{{end}}
+            </span>
+          </div>
+          {{if .Inspectable}}
+          <a class="uvy-button uvy-button--small" href="{{inspectURL .Canonical}}">Inspect image</a>
+          {{else}}
+          <span class="uvy-badge">Not inspectable</span>
+          {{end}}
+        </div>
+      </li>
+      {{end}}
+    </ul>
+    {{end}}
+  </section>
+  {{else if $t.Layers}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-lineage-empty-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-lineage-empty-title">Base image lineage</h3>
+      <span class="uvy-badge">Not established</span>
+    </div>
+    <p class="uvy-hint">No runtime base or build input was published via SLSA provenance or <code>org.opencontainers.image.base.*</code> annotations for this digest. OCI layer digests alone cannot reverse-map a parent image.</p>
+  </section>
+  {{end}}
+
+  <div class="uvy-grid">
+    <!-- Build & Provenance summary -->
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-hl-prov">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-hl-prov" class="with-icon">
+          <svg class="icon icon-muted" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-git-branch"></use></svg>
+          Build &amp; provenance
+        </h3>
+        {{with $t.PrimaryProvenance}}<span class="uvy-badge">{{.SLSAVersion}}</span>{{else}}<span class="uvy-badge">{{if $t.Attestations}}{{len $t.Attestations}} attestation{{if ne (len $t.Attestations) 1}}s{{end}}{{else}}Not published{{end}}</span>{{end}}
+      </div>
+      {{with $t.PrimaryProvenance}}
+      <dl class="uvy-kv uvy-kv--tight">
+        {{if .SourceRepo}}<div><dt>Source</dt><dd>{{if .SourceRepoURL}}<a href="{{.SourceRepoURL}}">{{.SourceRepo}}</a>{{else}}{{.SourceRepo}}{{end}}</dd></div>{{end}}
+        {{if .SourceRef}}<div><dt>Ref</dt><dd><code>{{.SourceRef}}</code></dd></div>{{end}}
+        {{if .Commit}}<div><dt>Commit</dt><dd>{{if .CommitURL}}<a href="{{.CommitURL}}"><code>{{shortCommit .Commit}}</code></a>{{else}}<code>{{shortCommit .Commit}}</code>{{end}}</dd></div>{{end}}
+        {{if .Workflow}}<div><dt>Workflow</dt><dd><code>{{.Workflow}}</code></dd></div>{{end}}
+        {{if .Builder}}<div><dt>Builder</dt><dd>{{if .BuildTypeLabel}}{{.BuildTypeLabel}} · {{end}}<code>{{.Builder}}</code></dd></div>{{end}}
+        {{if not .FinishedAt.IsZero}}<div><dt>Built</dt><dd><time datetime="{{formatISO .FinishedAt}}">{{formatUTC .FinishedAt}}</time>{{if .Duration}} ({{.Duration}}){{end}}</dd></div>{{end}}
+      </dl>
+      <div class="uvy-panel__footer">
+        <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-evidence" disabled data-enable-with-js>Inspect provenance details</button>
+      </div>
+      {{else}}
+        {{if and $t.Config $t.Config.OCIAnnotations}}
+        <dl class="uvy-kv uvy-kv--tight">
+          {{range $t.Config.OCIAnnotations}}
+          <div><dt>{{.Key}}</dt><dd>{{if .Link}}<a href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd></div>
+          {{end}}
+        </dl>
+        <p class="uvy-hint">From OCI image annotations; no SLSA provenance attestation was discovered.</p>
+        {{else}}
+        <p class="uvy-hint">No SLSA provenance attestation or OCI source annotations were published for this digest.</p>
+        {{end}}
+      {{end}}
+    </section>
+
+    <!-- Signatures & Identity summary -->
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-hl-sig">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-hl-sig" class="with-icon">
+          <svg class="icon icon-muted" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-shield-check"></use></svg>
+          Signatures &amp; identity
+        </h3>
+        {{if $t.Signatures}}
+        <span class="uvy-status {{if $t.HasValidSignature}}uvy-status--ok{{else}}uvy-status--info{{end}}">{{$t.SignatureSummaryLabel}}</span>
+        {{else if $t.HasValidSignature}}
+        <span class="uvy-status uvy-status--ok">Signed attestation</span>
+        {{else}}
+        <span class="uvy-badge">Not published</span>
+        {{end}}
+      </div>
+      {{with $t.PrimarySignature}}
+      <dl class="uvy-kv uvy-kv--tight">
+        {{if .Signer}}<div><dt>Signer</dt><dd class="code-break">{{.Signer}}</dd></div>{{end}}
+        {{if .OIDCIssuer}}<div><dt>OIDC issuer</dt><dd>{{.OIDCIssuer}}</dd></div>{{end}}
+        {{if .CertIssuer}}<div><dt>Cert issuer</dt><dd>{{.CertIssuer}}</dd></div>{{end}}
+        {{if .RekorLogIndex}}<div><dt>Rekor log</dt><dd class="num">#{{.RekorLogIndex}}{{if not .RekorTime.IsZero}} · <time datetime="{{formatISO .RekorTime}}">{{formatUTC .RekorTime}}</time>{{end}}</dd></div>{{end}}
+        {{if not .CertValidUntil.IsZero}}<div><dt>Cert validity</dt><dd><time datetime="{{formatISO .CertValidFrom}}">{{formatUTC .CertValidFrom}}</time> – <time datetime="{{formatISO .CertValidUntil}}">{{formatUTC .CertValidUntil}}</time></dd></div>{{end}}
+      </dl>
+      <div class="uvy-panel__footer">
+        <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-evidence" disabled data-enable-with-js>Inspect signatures</button>
+      </div>
+      {{else}}
+      <p class="uvy-hint">{{if $t.Signatures}}Signature artifacts were discovered, but no X.509 identity certificate was embedded (may be key-signed).{{else}}No OCI signature referrers or Cosign signature tags were discovered for this digest.{{end}}</p>
+      {{if $t.Signatures}}
+      <div class="uvy-panel__footer">
+        <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-evidence" disabled data-enable-with-js>Inspect signatures</button>
+      </div>
+      {{end}}
+      {{end}}
+    </section>
+
+    <!-- SBOM summary -->
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-hl-sbom">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-hl-sbom" class="with-icon">
+          <svg class="icon icon-muted" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-box"></use></svg>
+          Software inventory (SBOM)
+        </h3>
+        {{with $t.PrimarySBOM}}<span class="uvy-badge">{{.Format}}</span>{{else}}<span class="uvy-badge">Not published</span>{{end}}
+      </div>
+      {{with $t.PrimarySBOM}}
+      {{if .UnsupportedInventory}}
+      <p class="uvy-hint">An SBOM document was discovered, but it does not contain a supported SPDX or CycloneDX package inventory.</p>
+      {{else}}
+      <dl class="uvy-kv uvy-kv--tight">
+        <div><dt>Packages</dt><dd class="num">{{.TotalComponentsLabel}}{{if .RelationshipCount}} · {{.RelationshipCount}} {{.RelationshipLabel}}{{end}}</dd></div>
+        {{if .Creators}}<div><dt>Generator</dt><dd>{{join .Creators ", "}}</dd></div>{{end}}
+        {{if .Ecosystems}}
+        <div>
+          <dt>Ecosystems</dt>
+          <dd class="badge-list">{{range (topFacets .Ecosystems 5)}}<span class="uvy-badge">{{.Name}} ({{.Count}})</span>{{end}}</dd>
+        </div>
+        {{end}}
+        {{if .Licenses}}
+        <div>
+          <dt>Top licenses</dt>
+          <dd class="badge-list">{{range (topFacets .Licenses 5)}}<span class="uvy-badge">{{.Name}} ({{.Count}})</span>{{end}}</dd>
+        </div>
+        {{end}}
+      </dl>
+      {{end}}
+      <div class="uvy-panel__footer">
+        <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-sbom" disabled data-enable-with-js>Browse packages</button>
+      </div>
+      {{else}}
+      <p class="uvy-hint">No published SPDX or CycloneDX SBOM was discovered for this digest. This observatory displays only publisher-supplied SBOMs.</p>
+      {{end}}
+    </section>
+
+    <!-- Runtime Configuration summary -->
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-hl-config">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-hl-config" class="with-icon">
+          <svg class="icon icon-muted" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-code"></use></svg>
+          {{if $t.Layers}}Runtime configuration{{else}}Manifest summary{{end}}
+        </h3>
+        {{if and $t.Layers $t.Config}}
+          {{if $t.Config.IsNonRoot}}<span class="uvy-status uvy-status--ok">Non-root</span>{{else}}<span class="uvy-badge">Default / root</span>{{end}}
+        {{else}}
+          <span class="uvy-badge">{{$t.Kind}}</span>
+        {{end}}
+      </div>
+      {{if and $t.Layers $t.Config}}
+      <dl class="uvy-kv uvy-kv--tight">
+        <div><dt>User</dt><dd><code>{{$t.Config.UserLabel}}</code></dd></div>
+        {{if $t.Config.CommandSummary}}<div><dt>Command</dt><dd class="cmd-block"><code>{{$t.Config.CommandSummary}}</code></dd></div>{{end}}
+        {{if $t.Config.WorkingDir}}<div><dt>Workdir</dt><dd><code>{{$t.Config.WorkingDir}}</code></dd></div>{{end}}
+        {{if $t.Config.ExposedPorts}}<div><dt>Ports</dt><dd class="badge-list">{{range $t.Config.ExposedPorts}}<span class="uvy-badge">{{.}}</span>{{end}}</dd></div>{{end}}
+        {{if not $t.Config.Created.IsZero}}<div><dt>Created</dt><dd><time datetime="{{formatISO $t.Config.Created}}">{{formatUTC $t.Config.Created}}</time></dd></div>{{end}}
+        <div><dt>Layers</dt><dd class="num">{{len $t.Layers}} layers · {{bytes $t.LayerBytes}} compressed</dd></div>
+      </dl>
+      <div class="uvy-panel__footer">
+        <div class="uvy-actions">
+          <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-layers" disabled data-enable-with-js>Inspect layers</button>
+          <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-config" disabled data-enable-with-js>Full config</button>
+        </div>
+      </div>
+      {{else}}
+      <dl class="uvy-kv uvy-kv--tight">
+        <div><dt>Digest</dt><dd><code title="{{$t.Digest}}">{{shortDigest $t.Digest}}</code></dd></div>
+        <div><dt>Media type</dt><dd><code>{{$t.MediaType}}</code></dd></div>
+        {{if $report.Platforms}}<div><dt>Platforms</dt><dd class="num">{{len $report.Platforms}} runnable manifests</dd></div>{{end}}
+        <div><dt>Manifest size</dt><dd class="num">{{bytes $t.Size}}</dd></div>
+      </dl>
+      <div class="uvy-panel__footer">
+        <button type="button" class="uvy-button--small" data-open-tab="{{$sid}}-tab-config" disabled data-enable-with-js>View raw manifest</button>
+      </div>
+      {{end}}
+    </section>
+  </div>
+</div>
+
+<!-- TAB 2: SIGNATURES & ATTESTATIONS -->
+<div id="{{$sid}}-panel-evidence" role="tabpanel" aria-labelledby="{{$sid}}-tab-evidence" class="uvy-stack" hidden>
+  {{if $t.NonSBOMArtifactCount}}
+    {{if $t.Signatures}}
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-sec-sigs">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-sec-sigs">Signatures</h3>
+        <span class="uvy-count">{{len $t.Signatures}} artifact{{if ne (len $t.Signatures) 1}}s{{end}}</span>
+      </div>
+      {{range $t.Signatures}}{{template "artifact-entry" .}}{{end}}
+    </section>
+    {{end}}
+
+    {{if $t.Attestations}}
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-sec-atts">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-sec-atts">Build provenance &amp; attestations</h3>
+        <span class="uvy-count">{{len $t.Attestations}} artifact{{if ne (len $t.Attestations) 1}}s{{end}}</span>
+      </div>
+      {{range $t.Attestations}}{{template "artifact-entry" .}}{{end}}
+    </section>
+    {{end}}
+
+    {{if $t.OtherArtifacts}}
+    <section class="uvy-panel" aria-labelledby="{{$sid}}-sec-other">
+      <div class="uvy-panel__header">
+        <h3 id="{{$sid}}-sec-other">Other published metadata</h3>
+        <span class="uvy-count">{{len $t.OtherArtifacts}} artifact{{if ne (len $t.OtherArtifacts) 1}}s{{end}}</span>
+      </div>
+      {{range $t.OtherArtifacts}}{{template "artifact-entry" .}}{{end}}
+    </section>
+    {{end}}
+  {{else}}
+  <div class="uvy-empty">
+    <strong>No signatures or attestations found</strong>
+    <p>No OCI referrers, BuildKit index attestations, or Cosign signature/attestation tags were discovered for <code>{{shortDigest $t.Digest}}</code>.</p>
+  </div>
+  {{end}}
+</div>
+
+<!-- TAB 3: SBOM & PACKAGES -->
+<div id="{{$sid}}-panel-sbom" role="tabpanel" aria-labelledby="{{$sid}}-tab-sbom" class="uvy-stack" hidden>
+  {{if $t.SBOMs}}
+    {{range $t.SBOMs}}
+    {{$art := .}}
+    <section class="uvy-panel" data-sbom-container aria-labelledby="{{$sid}}-sbom-{{.ID}}">
+      <div class="uvy-panel__header">
+        <div>
+          <h3 id="{{$sid}}-sbom-{{.ID}}">{{if .Purpose}}{{.Purpose}}{{else}}SBOM{{end}}</h3>
+          <div class="meta-strip">
+            <span class="uvy-status {{.Verification.StatusClass}}">{{.Verification.DisplayLabel}}</span>
+            <span class="uvy-badge">No policy trust evaluated</span>
+            <span class="uvy-badge">{{.DecodeStatus}}</span>
+            <span class="uvy-badge" title="{{.Discovery}}">{{.DiscoveryLabel}}</span>
+          </div>
+        </div>
+        {{if .Downloadable}}
+        <a class="uvy-button uvy-button--small" href="/artifacts/{{.ID}}/download">
+          <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-download"></use></svg>
+          Download raw ({{bytes .Size}})
+        </a>
+        {{end}}
+      </div>
+
+      {{if .Error}}
+      <div class="uvy-alert uvy-alert--danger">
+        <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-circle"></use></svg>
+        <div>{{.Error}}</div>
+      </div>
+      {{end}}
+
+      {{with .SBOM}}
+      <dl class="uvy-kv">
+        <div><dt>Format</dt><dd><code>{{.Format}}</code></dd></div>
+        {{if .DocumentName}}<div><dt>Document</dt><dd>{{.DocumentName}}</dd></div>{{end}}
+        {{if .Creators}}<div><dt>Generated by</dt><dd>{{join .Creators ", "}}</dd></div>{{end}}
+        {{if not .Created.IsZero}}<div><dt>Created</dt><dd><time datetime="{{formatISO .Created}}">{{formatUTC .Created}}</time></dd></div>{{end}}
+        {{if not .UnsupportedInventory}}
+        <div><dt>Inventory</dt><dd class="num">{{.TotalComponentsLabel}} packages{{if .RelationshipCount}} · {{.RelationshipCount}} {{.RelationshipLabel}}{{end}}</dd></div>
+        {{end}}
+      </dl>
+
+      {{if .UnsupportedInventory}}
+      <div class="uvy-alert uvy-alert--warn">
+        <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-triangle"></use></svg>
+        <div>This SBOM document does not include a supported SPDX or CycloneDX package inventory. Inspect or download the raw payload below.</div>
+      </div>
+      {{else if .AllComponents}}
+      {{if or .Ecosystems .Licenses}}
+      <div class="facet-section">
+        {{if .Ecosystems}}
+        <div class="facet-group">
+          <span class="uvy-label">Ecosystems</span>
+          {{range (topFacets .Ecosystems 8)}}
+          <button type="button" class="facet-chip" data-facet-form="sbom-form-{{$sid}}-{{$art.ID}}" data-facet-field="ecosystem" data-facet-value="{{.Name}}" aria-pressed="false" disabled data-enable-with-js>
+            <span>{{.Name}}</span><span class="facet-chip__count">{{.Count}}</span>
+          </button>
+          {{end}}
+        </div>
+        {{end}}
+        {{if .Licenses}}
+        <div class="facet-group">
+          <span class="uvy-label">Licenses</span>
+          {{range (topFacets .Licenses 8)}}
+          <button type="button" class="facet-chip" data-facet-form="sbom-form-{{$sid}}-{{$art.ID}}" data-facet-field="license" data-facet-value="{{.Name}}" aria-pressed="false" disabled data-enable-with-js>
+            <span>{{.Name}}</span><span class="facet-chip__count">{{.Count}}</span>
+          </button>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+      <form id="sbom-form-{{$sid}}-{{$art.ID}}" class="uvy-toolbar" method="get" action="/artifacts/{{$art.ID}}/packages"
+        hx-get="/artifacts/{{$art.ID}}/packages"
+        hx-target="#sbom-results-{{$art.ID}}"
+        hx-swap="outerHTML"
+        hx-trigger="input changed delay:250ms from:find input[type=search], change from:find select, submit">
+        <input type="hidden" name="page" value="1">
+        <div class="uvy-field">
+          <label for="sbom-q-{{$sid}}-{{$art.ID}}">Search packages</label>
+          <input id="sbom-q-{{$sid}}-{{$art.ID}}" name="q" type="search" class="uvy-input--mono" placeholder="Name, version, PURL, supplier" data-sbom-filter>
+        </div>
+        {{if .Ecosystems}}
+        <div class="uvy-field uvy-field--fit">
+          <label for="sbom-eco-{{$sid}}-{{$art.ID}}">Ecosystem</label>
+          <select id="sbom-eco-{{$sid}}-{{$art.ID}}" name="ecosystem" data-sbom-filter>
+            <option value="">All ecosystems</option>
+            {{range .Ecosystems}}<option value="{{.Name}}">{{.Name}} ({{.Count}})</option>{{end}}
+          </select>
+        </div>
+        {{end}}
+        {{if .Licenses}}
+        <div class="uvy-field uvy-field--fit">
+          <label for="sbom-lic-{{$sid}}-{{$art.ID}}">License</label>
+          <select id="sbom-lic-{{$sid}}-{{$art.ID}}" name="license" data-sbom-filter>
+            <option value="">All licenses</option>
+            {{range .Licenses}}<option value="{{.Name}}">{{.Name}} ({{.Count}})</option>{{end}}
+          </select>
+        </div>
+        {{end}}
+        <button type="button" data-clear-sbom="sbom-form-{{$sid}}-{{$art.ID}}" disabled data-enable-with-js>Clear filter</button>
+      </form>
+
+      {{template "sbom-table" (packagePage $art)}}
+      {{end}}
+      {{end}}
+
+      <div class="artifact-item__actions">
+        {{if .RawView}}
+        <a class="uvy-button uvy-button--small" href="/artifacts/{{.ID}}/view" hx-get="/artifacts/{{.ID}}/view" hx-target="#sbom-payload-{{$sid}}-{{.ID}}" hx-swap="innerHTML">
+          <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-file-text"></use></svg>
+          Inspect decoded &amp; raw JSON
+        </a>
+        {{end}}
+      </div>
+      <div id="sbom-payload-{{$sid}}-{{.ID}}"></div>
+
+      <details class="uvy-disclosure">
+        <summary>Technical artifact details</summary>
+        <div class="uvy-disclosure__body">
+          <dl class="uvy-kv uvy-kv--tight">
+            <div><dt>Artifact digest</dt><dd><code>{{.Digest}}</code></dd></div>
+            <div><dt>Target digest</dt><dd><code>{{.TargetDigest}}</code></dd></div>
+            {{if .MediaType}}<div><dt>Media type</dt><dd><code>{{.MediaType}}</code></dd></div>{{end}}
+            {{if .ArtifactType}}<div><dt>Artifact type</dt><dd><code>{{.ArtifactType}}</code></dd></div>{{end}}
+            <div><dt>Verification detail</dt><dd>{{.Verification.Detail}}</dd></div>
+          </dl>
+        </div>
+      </details>
+    </section>
+    {{end}}
+  {{else}}
+  <div class="uvy-empty">
+    <strong>No published SBOM found</strong>
+    <p>No SPDX or CycloneDX software bill of materials was discovered for <code>{{shortDigest $t.Digest}}</code>. This tool inspects published metadata only and does not generate SBOMs.</p>
+  </div>
+  {{end}}
+</div>
+
+<!-- TAB 4: LAYERS & LINEAGE -->
+<div id="{{$sid}}-panel-layers" role="tabpanel" aria-labelledby="{{$sid}}-tab-layers" class="uvy-stack" hidden>
+  {{if $t.Layers}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-layers-title">
+    <div class="uvy-panel__header">
+      <div>
+        <h3 id="{{$sid}}-layers-title">Filesystem layer stack (base to application)</h3>
+        <p class="uvy-hint">Descriptors and OCI config build history only—layer content is never downloaded.{{if and $t.Base $t.Base.SharedLayers}} Layers 1–{{$t.Base.SharedLayers}} match the exact digest prefix of <code>{{$t.Base.Reference}}</code>.{{end}}</p>
+      </div>
+      <span class="uvy-count">{{len $t.Layers}} layers · {{bytes $t.LayerBytes}} compressed</span>
+    </div>
+    <div class="table-wrap" role="region" aria-label="Ordered filesystem layers" tabindex="0">
+      <table class="uvy-table--comparison">
+        <caption class="sr-only">Ordered OCI filesystem layers from base to application</caption>
+        <thead>
+          <tr>
+            <th scope="col" class="num">#</th>
+            {{if and $t.Base $t.Base.SharedLayers}}<th scope="col">Origin</th>{{end}}
+            <th scope="col">Build step</th>
+            <th scope="col">Format</th>
+            <th scope="col" class="num">Compressed size</th>
+            <th scope="col">Digest</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range $t.Layers}}
+          <tr>
+            <td class="num">{{.Index}}</td>
+            {{if and $t.Base $t.Base.SharedLayers}}
+            <td>
+              {{if .FromBase}}<span class="uvy-badge">Base</span>{{else}}<span class="uvy-status uvy-status--info">Added</span>{{end}}
+            </td>
+            {{end}}
+            <td>
+              {{if .Command}}
+                <span class="layer-cmd" title="{{.RawCommand}}">{{.Command}}</span>
+              {{else}}
+                <span class="layer-cmd layer-cmd--empty">No build history recorded</span>
+              {{end}}
+            </td>
+            <td><span class="uvy-badge">{{.ShortMediaType}}</span></td>
+            <td class="num">
+              <div class="layer-size-cell">
+                <span>{{bytes .Size}}</span>
+                <progress class="layer-bar {{if .FromBase}}layer-bar--base{{end}}" value="{{.SizePercent}}" max="100" aria-label="{{.SizePercent}}% of compressed image size"></progress>
+              </div>
+            </td>
+            <td>
+              <div class="kv-inline kv-inline--start">
+                <code title="{{.Digest}}">{{shortDigest .Digest}}</code>
+                <button type="button" class="uvy-button--quiet uvy-button--small uvy-copy" data-copy-text="{{.Digest}}" data-enable-with-js disabled aria-label="Copy layer {{.Index}} digest">{{template "copy-button-text"}}</button>
+              </div>
+            </td>
           </tr>
           {{end}}
         </tbody>
@@ -71,238 +685,294 @@
     </div>
   </section>
 
-  <div class="target-tabs report-section" data-target-tabs>
-    <div class="scope-toolbar"><label for="scope-select">Viewing</label><select id="scope-select" data-scope-select>
-    <option value="target-top" {{if eq $default "target-top"}}selected{{end}}>{{.TopLevel.ScopeLabel}}</option>
-    {{range $idx, $platform := .Platforms}}<option value="target-platform-{{$idx}}" {{if eq $default (printf "target-platform-%d" $idx)}}selected{{end}}>{{$platform.Name}}</option>{{end}}
-    </select><a href="#coverage-title">Compare evidence ↑</a></div>
-    <div id="target-top" class="target-panel" data-target-panel {{if ne $default "target-top"}}hidden{{end}}>
-      {{template "target" .TopLevel}}
+  {{if and $t.Config $t.Config.History}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-history-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-history-title">Full OCI image build history</h3>
+      <span class="uvy-count">{{len $t.Config.History}} steps</span>
     </div>
-    {{range $idx, $platform := .Platforms}}
-    <div id="target-platform-{{$idx}}" class="target-panel" data-target-panel {{if ne $default (printf "target-platform-%d" $idx)}}hidden{{end}}>
-      {{template "target" $platform}}
+    <p class="uvy-hint">Includes metadata-only instructions (<code>ENV</code>, <code>USER</code>, <code>WORKDIR</code>, <code>ENTRYPOINT</code>) that do not create a filesystem layer.</p>
+    <details class="uvy-disclosure">
+      <summary>Show all {{len $t.Config.History}} build history entries</summary>
+      <div class="uvy-disclosure__body">
+        <div class="table-wrap" role="region" aria-label="Full image build history" tabindex="0">
+          <table class="uvy-table--comparison uvy-table--compact">
+            <thead>
+              <tr>
+                <th scope="col">Layer</th>
+                <th scope="col">Instruction</th>
+                <th scope="col">Created (UTC)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range $t.Config.History}}
+              <tr>
+                <td>{{if .EmptyLayer}}<span class="uvy-badge">Config</span>{{else}}<span class="uvy-badge">Layer {{.LayerIndex}}</span>{{end}}</td>
+                <td><span class="layer-cmd" title="{{.RawCommand}}">{{if .Command}}{{.Command}}{{else}}{{.Comment}}{{end}}</span></td>
+                <td>{{if not .Created.IsZero}}<time datetime="{{formatISO .Created}}">{{formatUTC .Created}}</time>{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  </section>
+  {{end}}
+  {{else}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-index-inputs-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-index-inputs-title">Upstream images across all platforms</h3>
+      <span class="uvy-count">{{len $report.BuildInputs}} image{{if ne (len $report.BuildInputs) 1}}s{{end}}</span>
+    </div>
+    {{if $report.BuildInputs}}
+    <ul class="uvy-list">
+      {{range $report.BuildInputs}}
+      <li>
+        <div class="uvy-list__item">
+          <div class="uvy-list__primary">
+            <div><code>{{.Reference}}</code> <span class="uvy-badge">{{.Role}}</span></div>
+            <span class="uvy-list__meta">Platforms: {{join .Platforms ", "}} · {{join .Evidence " + "}}{{if .Digest}} · {{shortDigest .Digest}}{{end}}</span>
+          </div>
+          {{if .Inspectable}}
+          <a class="uvy-button uvy-button--small" href="{{inspectURL .Canonical}}">Inspect image</a>
+          {{else}}
+          <span class="uvy-badge">Not inspectable</span>
+          {{end}}
+        </div>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}
+    <div class="uvy-empty">
+      <strong>No upstream build inputs discovered</strong>
+      <p>Select a platform manifest above to inspect its ordered filesystem layers, or check whether build provenance was published.</p>
     </div>
     {{end}}
-  </div>
-  {{if .BuildInputs}}
-  <details class="report-section all-inputs"><summary>All published build inputs ({{len .BuildInputs}})</summary>
-    <div class="report-section-head">
-      <div>
-        <p class="eyebrow">Build inputs</p>
-        <h2 id="build-inputs-title">Images used to produce this image</h2>
-      </div>
+  </section>
+  {{end}}
+</div>
+
+<!-- TAB 5: CONFIG & RAW MANIFEST -->
+<div id="{{$sid}}-panel-config" role="tabpanel" aria-labelledby="{{$sid}}-tab-config" class="uvy-stack" hidden>
+  {{if $t.Config}}
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-cfg-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-cfg-title">Runtime configuration &amp; annotations</h3>
+      {{if $t.OS}}<span class="uvy-badge">{{$t.OS}}/{{$t.Architecture}}{{if $t.Variant}}/{{$t.Variant}}{{end}}</span>{{end}}
     </div>
-    <div class="build-input-grid">
-      {{range .BuildInputs}}
-      <article class="build-input-card">
-        <div class="build-input-head">
-          <strong class="mono">{{.Reference}}</strong>
-          <span class="chip">{{.Role}}</span>
-        </div>
-        <dl class="compact-facts">
-          <dt>Platforms</dt><dd>{{join .Platforms ", "}}</dd>
-          <dt>Evidence</dt><dd>{{join .Evidence " + "}}</dd>
-          {{if .Digest}}<dt>Digest</dt><dd class="mono digest-value">{{.Digest}}</dd>{{end}}
-          {{if .SharedLayers}}<dt>Layer match</dt><dd>{{.SharedLayers}} of {{.BaseLayerCount}} base layers; {{.AddedLayerCount}} added</dd>{{end}}
-        </dl>
-        {{if .Inspectable}}
-        <a class="btn-secondary btn-inline" href="{{inspectURL .Canonical}}">Inspect this image’s evidence</a>
-        {{else}}
-        <p class="support-note">No inspection link: an approved registry and a valid immutable digest are required.</p>
-        {{end}}
-      </article>
+    <dl class="uvy-kv uvy-kv--tight">
+      {{if $t.Layers}}
+      <div><dt>User</dt><dd><code>{{$t.Config.UserLabel}}</code> {{if $t.Config.IsNonRoot}}<span class="uvy-status uvy-status--ok">Non-root</span>{{end}}</dd></div>
+      {{if $t.Config.Entrypoint}}<div><dt>Entrypoint</dt><dd><code>{{join $t.Config.Entrypoint " "}}</code></dd></div>{{end}}
+      {{if $t.Config.Cmd}}<div><dt>Cmd</dt><dd><code>{{join $t.Config.Cmd " "}}</code></dd></div>{{end}}
+      {{if $t.Config.WorkingDir}}<div><dt>Working directory</dt><dd><code>{{$t.Config.WorkingDir}}</code></dd></div>{{end}}
+      {{if $t.Config.ExposedPorts}}<div><dt>Exposed ports</dt><dd class="badge-list">{{range $t.Config.ExposedPorts}}<span class="uvy-badge">{{.}}</span>{{end}}</dd></div>{{end}}
+      {{if $t.Config.Volumes}}<div><dt>Volumes</dt><dd class="badge-list">{{range $t.Config.Volumes}}<span class="uvy-badge">{{.}}</span>{{end}}</dd></div>{{end}}
+      {{if $t.Config.StopSignal}}<div><dt>Stop signal</dt><dd><code>{{$t.Config.StopSignal}}</code></dd></div>{{end}}
+      {{if not $t.Config.Created.IsZero}}<div><dt>Created</dt><dd><time datetime="{{formatISO $t.Config.Created}}">{{formatUTC $t.Config.Created}}</time></dd></div>{{end}}
+      {{if $t.Config.Author}}<div><dt>Author</dt><dd>{{$t.Config.Author}}</dd></div>{{end}}
       {{end}}
+      {{range $t.Config.OCIAnnotations}}
+      <div><dt>{{.Key}}</dt><dd>{{if .Link}}<a href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd></div>
+      {{end}}
+    </dl>
+
+    {{if $t.Config.Env}}
+    <details class="uvy-disclosure">
+      <summary>Environment variables ({{len $t.Config.Env}})</summary>
+      <div class="uvy-disclosure__body">
+        <dl class="uvy-kv uvy-kv--tight">
+          {{range $t.Config.Env}}
+          <div><dt>{{.Key}}</dt><dd><code>{{.Value}}</code></dd></div>
+          {{end}}
+        </dl>
+      </div>
+    </details>
+    {{end}}
+
+    {{if $t.Config.Labels}}
+    <details class="uvy-disclosure">
+      <summary>All image labels ({{len $t.Config.Labels}})</summary>
+      <div class="uvy-disclosure__body">
+        <dl class="uvy-kv uvy-kv--tight">
+          {{range $t.Config.Labels}}
+          <div><dt>{{.Key}}</dt><dd>{{if .Link}}<a href="{{.Link}}">{{.Value}}</a>{{else}}<code>{{.Value}}</code>{{end}}</dd></div>
+          {{end}}
+        </dl>
+      </div>
+    </details>
+    {{end}}
+  </section>
+  {{end}}
+
+  <section class="uvy-panel" aria-labelledby="{{$sid}}-raw-title">
+    <div class="uvy-panel__header">
+      <h3 id="{{$sid}}-raw-title">Raw OCI manifest &amp; configuration JSON</h3>
+      <span class="uvy-badge">{{$t.MediaType}}</span>
+    </div>
+    <dl class="uvy-kv">
+      <div>
+        <dt>Manifest digest</dt>
+        <dd class="kv-inline">
+          <code id="md-{{$sid}}">{{$t.Digest}}</code>
+          <button type="button" class="uvy-button--quiet uvy-button--small uvy-copy" data-copy-target="md-{{$sid}}" data-enable-with-js disabled aria-label="Copy manifest digest">{{template "copy-button-text"}}</button>
+        </dd>
+      </div>
+      <div><dt>Media type</dt><dd><code>{{$t.MediaType}}</code></dd></div>
+      {{if $t.Size}}<div><dt>Manifest size</dt><dd class="num">{{bytes $t.Size}}</dd></div>{{end}}
+    </dl>
+    <div class="uvy-actions">
+      {{if $t.ManifestArtifactID}}
+      <a class="uvy-button uvy-button--small" href="/artifacts/{{$t.ManifestArtifactID}}/view" hx-get="/artifacts/{{$t.ManifestArtifactID}}/view" hx-target="#raw-doc-{{$sid}}" hx-swap="innerHTML">
+        <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-file-text"></use></svg>
+        Inspect raw manifest JSON
+      </a>
+      <a class="uvy-button uvy-button--small" href="/artifacts/{{$t.ManifestArtifactID}}/download">
+        <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-download"></use></svg>
+        Download manifest
+      </a>
+      {{end}}
+      {{if $t.ConfigArtifactID}}
+      <a class="uvy-button uvy-button--small" href="/artifacts/{{$t.ConfigArtifactID}}/view" hx-get="/artifacts/{{$t.ConfigArtifactID}}/view" hx-target="#raw-doc-{{$sid}}" hx-swap="innerHTML">
+        <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-code"></use></svg>
+        Inspect raw config JSON
+      </a>
+      <a class="uvy-button uvy-button--small" href="/artifacts/{{$t.ConfigArtifactID}}/download">
+        <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-download"></use></svg>
+        Download config
+      </a>
+      {{end}}
+    </div>
+    <div id="raw-doc-{{$sid}}"></div>
+  </section>
+</div>
+{{end}}
+
+{{define "artifact-entry"}}
+<article class="artifact-item">
+  <div class="artifact-item__head">
+    <h4 class="artifact-item__title">{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</h4>
+    <div class="artifact-item__badges">
+      <span class="uvy-status {{.Verification.StatusClass}}">{{.Verification.DisplayLabel}}</span>
+      <span class="uvy-badge">No policy trust evaluated</span>
+      {{if eq .Verification.SubjectMatch "matches"}}<span class="uvy-status uvy-status--ok">Covers inspected digest</span>{{else if eq .Verification.SubjectMatch "mismatch"}}<span class="uvy-status uvy-status--warn">Subject digest differs</span>{{end}}
+      <span class="uvy-badge">{{.DecodeStatus}}</span>
+      <span class="uvy-badge" title="{{.Discovery}}">{{.DiscoveryLabel}}</span>
+    </div>
+  </div>
+
+  {{if .Verification.Detail}}<p class="artifact-item__detail">{{.Verification.Detail}}</p>{{end}}
+
+  {{if .Error}}
+  <div class="uvy-alert uvy-alert--danger">
+    <svg class="icon" aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-alert-circle"></use></svg>
+    <div>{{.Error}}</div>
+  </div>
+  {{end}}
+
+  {{if .Provenance}}
+    {{with .Provenance}}
+    <dl class="uvy-kv uvy-kv--tight">
+      {{if .SLSAVersion}}<div><dt>Format</dt><dd><span class="uvy-badge">{{.SLSAVersion}}</span>{{if .BuildTypeLabel}} · {{.BuildTypeLabel}}{{end}}</dd></div>{{end}}
+      {{if .SourceRepo}}<div><dt>Source repository</dt><dd>{{if .SourceRepoURL}}<a href="{{.SourceRepoURL}}">{{.SourceRepo}}</a>{{else}}{{.SourceRepo}}{{end}}</dd></div>{{end}}
+      {{if .SourceRef}}<div><dt>Source ref</dt><dd><code>{{.SourceRef}}</code></dd></div>{{end}}
+      {{if .Commit}}<div><dt>Commit</dt><dd>{{if .CommitURL}}<a href="{{.CommitURL}}"><code>{{.Commit}}</code></a>{{else}}<code>{{.Commit}}</code>{{end}}</dd></div>{{end}}
+      {{if .Workflow}}<div><dt>Workflow</dt><dd><code>{{.Workflow}}</code></dd></div>{{end}}
+      {{if .Dockerfile}}<div><dt>Dockerfile</dt><dd><code>{{.Dockerfile}}</code></dd></div>{{end}}
+      {{if .Builder}}<div><dt>Builder</dt><dd><code>{{.Builder}}</code></dd></div>{{end}}
+      {{if .InvocationID}}<div><dt>Build run</dt><dd>{{if .InvocationURL}}<a href="{{.InvocationURL}}">{{.InvocationID}}</a>{{else}}<code>{{.InvocationID}}</code>{{end}}</dd></div>{{end}}
+      {{if not .StartedAt.IsZero}}<div><dt>Started</dt><dd><time datetime="{{formatISO .StartedAt}}">{{formatUTC .StartedAt}}</time></dd></div>{{end}}
+      {{if not .FinishedAt.IsZero}}<div><dt>Finished</dt><dd><time datetime="{{formatISO .FinishedAt}}">{{formatUTC .FinishedAt}}</time>{{if .Duration}} ({{.Duration}}){{end}}</dd></div>{{end}}
+      {{if .ResolvedInputCount}}<div><dt>Resolved inputs</dt><dd class="num">{{.ResolvedInputCount}}</dd></div>{{end}}
+    </dl>
+    {{if .Materials}}
+    <details class="uvy-disclosure">
+      <summary>Build materials &amp; resolved dependencies ({{len .Materials}})</summary>
+      <div class="uvy-disclosure__body">
+        <div class="table-wrap" role="region" tabindex="0">
+          <table class="uvy-table--compact">
+            <thead><tr><th scope="col">Kind</th><th scope="col">URI</th><th scope="col">Digest</th></tr></thead>
+            <tbody>
+              {{range .Materials}}
+              <tr>
+                <td><span class="uvy-badge">{{.Kind}}</span></td>
+                <td><code>{{.URI}}</code></td>
+                <td>{{if .Digest}}<code>{{shortDigest .Digest}}</code>{{else}}<span class="uvy-unknown">—</span>{{end}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+    {{end}}
+    {{end}}
+  {{else if .Signature}}
+    {{with .Signature}}
+    <dl class="uvy-kv uvy-kv--tight">
+      {{if .Signer}}<div><dt>Signer identity</dt><dd class="code-break">{{if (httpsLink .Signer)}}<a href="{{httpsLink .Signer}}">{{.Signer}}</a>{{else}}{{.Signer}}{{end}}</dd></div>{{end}}
+      {{if .OIDCIssuer}}<div><dt>OIDC issuer</dt><dd>{{if (httpsLink .OIDCIssuer)}}<a href="{{httpsLink .OIDCIssuer}}">{{.OIDCIssuer}}</a>{{else}}{{.OIDCIssuer}}{{end}}</dd></div>{{end}}
+      {{if .SourceRepo}}<div><dt>Source repository</dt><dd>{{if (httpsLink .SourceRepo)}}<a href="{{httpsLink .SourceRepo}}">{{.SourceRepo}}</a>{{else}}{{.SourceRepo}}{{end}}</dd></div>{{end}}
+      {{if .WorkflowRef}}<div><dt>Workflow ref</dt><dd><code>{{.WorkflowRef}}</code></dd></div>{{end}}
+      {{if .RunnerEnv}}<div><dt>Runner</dt><dd><span class="uvy-badge">{{.RunnerEnv}}</span></dd></div>{{end}}
+      {{if .CertIssuer}}<div><dt>Certificate issuer</dt><dd>{{.CertIssuer}}</dd></div>{{end}}
+      {{if not .CertValidUntil.IsZero}}<div><dt>Certificate validity</dt><dd><time datetime="{{formatISO .CertValidFrom}}">{{formatUTC .CertValidFrom}}</time> – <time datetime="{{formatISO .CertValidUntil}}">{{formatUTC .CertValidUntil}}</time></dd></div>{{end}}
+      {{if .RekorLogIndex}}<div><dt>Rekor log entry</dt><dd class="num">#{{.RekorLogIndex}}{{if not .RekorTime.IsZero}} · <time datetime="{{formatISO .RekorTime}}">{{formatUTC .RekorTime}}</time>{{end}}</dd></div>{{end}}
+      {{if .DockerReference}}<div><dt>Signed reference</dt><dd><code>{{.DockerReference}}</code></dd></div>{{end}}
+      {{if .SignedDigest}}<div><dt>Signed digest</dt><dd><code>{{.SignedDigest}}</code></dd></div>{{end}}
+    </dl>
+    {{end}}
+  {{else if .OverviewFacts}}
+    <dl class="uvy-kv uvy-kv--tight">
+      {{range .OverviewFacts}}
+      <div><dt>{{.Key}}</dt><dd>{{if .Link}}<a href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd></div>
+      {{end}}
+    </dl>
+  {{end}}
+
+  {{if .CertificateFacts}}
+  <details class="uvy-disclosure">
+    <summary>Published certificate identity (unverified chain)</summary>
+    <div class="uvy-disclosure__body">
+      <dl class="uvy-kv uvy-kv--tight">
+        {{range .CertificateFacts}}
+        <div><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>
+        {{end}}
+      </dl>
     </div>
   </details>
   {{end}}
 
-
-</section>
-{{end}}
-{{end}}
-
-{{define "target"}}
-<section class="section-card target-card">
-  <div class="section-head">
-    <div>
-      <h2>{{.ScopeLabel}}</h2>
-      <p>{{if .Layers}}{{len .Layers}} layers · {{bytes .LayerBytes}} compressed · {{end}}{{.ArtifactCount}} published artifact{{if ne .ArtifactCount 1}}s{{end}}</p>
-    </div>
-    <span class="chip">{{.Kind}}</span>
-  </div>
-  <div class="section-body">
-    {{if .Base}}
-    <section class="lineage-block" aria-label="Runtime lineage">
-      <p class="eyebrow">Runtime lineage</p>
-      <div class="lineage-flow">
-        <article class="lineage-node">
-          <span class="node-label">Runtime base</span>
-          <strong class="mono">{{.Base.Reference}}</strong>
-          <span>{{if .Base.SharedLayers}}{{.Base.SharedLayers}} matching base layers{{else}}Publisher-declared relationship{{end}}</span>
-          {{if .Base.Inspectable}}<a href="{{inspectURL .Base.Canonical}}">Inspect evidence</a>{{end}}
-        </article>
-        <span class="lineage-arrow" aria-hidden="true">→</span>
-        <article class="lineage-node application-node">
-          <span class="node-label">Application image</span>
-          <strong>{{.Name}}</strong>
-          <span>{{if .Base.SharedLayers}}{{.Base.AddedLayerCount}} added layer{{if ne .Base.AddedLayerCount 1}}s{{end}}{{else}}Layer inheritance not established{{end}}</span>
-          <span class="mono" title="{{.Digest}}">{{shortDigest .Digest}}</span>
-        </article>
-      </div>
-      <p class="support-note">Relationship evidence: {{join .Base.Evidence " + "}}.</p>
-    </section>
+  <div class="artifact-item__actions">
+    {{if .RawView}}
+    <a class="uvy-button uvy-button--small" href="/artifacts/{{.ID}}/view" hx-get="/artifacts/{{.ID}}/view" hx-target="#payload-{{.ID}}" hx-swap="innerHTML">
+      <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-file-text"></use></svg>
+      Inspect decoded &amp; raw JSON
+    </a>
     {{end}}
-
-    {{if and .Layers (not .Base)}}<p class="support-note lineage-empty">No runtime base established from published metadata. Layer digests alone cannot identify a parent image.</p>{{end}}
-    {{if .BuildInputs}}<details class="technical-details"><summary>Build inputs for this scope ({{len .BuildInputs}})</summary><ul class="scope-inputs">{{range .BuildInputs}}<li><span class="chip">{{.Role}}</span> {{if .Inspectable}}<a href="{{inspectURL .Canonical}}">{{.Reference}} ↗</a>{{else}}{{.Reference}}{{end}}<small>{{join .Evidence " · "}}</small></li>{{end}}</ul></details>{{end}}
-    {{range .Warnings}}<p class="chip warn">{{.}}</p>{{end}}
-    {{if .ArtifactCount}}
-      {{if .Signatures}}
-      <h3 class="artifact-section-title">Signatures</h3>
-      <div class="artifact-stack">{{range .Signatures}}{{template "artifact" .}}{{end}}</div>
-      {{end}}
-      {{if .Attestations}}
-      <h3 class="artifact-section-title">Attestations and provenance</h3>
-      <div class="artifact-stack">{{range .Attestations}}{{template "artifact" .}}{{end}}</div>
-      {{end}}
-      {{if .SBOMs}}
-      <h3 class="artifact-section-title">SBOMs</h3>
-      <div class="artifact-stack">{{range .SBOMs}}{{template "artifact" .}}{{end}}</div>
-      {{end}}
-      {{if .OtherArtifacts}}<h3 class="artifact-section-title">Other published metadata</h3><div class="artifact-stack">{{range .OtherArtifacts}}{{template "artifact" .}}{{end}}</div>{{end}}
-    {{else}}
-      <div class="empty-state">No supported supply-chain artifacts were discovered for this digest.</div>
+    {{if .Downloadable}}
+    <a class="uvy-button uvy-button--small" href="/artifacts/{{.ID}}/download">
+      <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-download"></use></svg>
+      Download raw ({{bytes .Size}})
+    </a>
     {{end}}
-
-    <details class="technical-details">
-      <summary>Manifest &amp; layer details</summary>
-      <dl class="compact-facts">
-        <dt>Digest</dt><dd class="mono digest-value">{{.Digest}}</dd><dt>Media type</dt><dd>{{.MediaType}}</dd>
-        <dt>Layers</dt><dd>{{len .Layers}}</dd>
-        {{if .OS}}<dt>Platform</dt><dd>{{.OS}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}</dd>{{end}}
-      </dl>
-      <p class="support-note">{{if .Layers}}Ordered from base to application. These are descriptors only; layer content is never downloaded.{{else}}This scope has no filesystem layer descriptors.{{end}}</p><ol class="layer-list">{{range .Layers}}<li><span class="mono digest-value">{{.Digest}}</span><span>{{bytes .Size}}</span></li>{{end}}</ol>
-    </details>
   </div>
-</section>
-{{end}}
+  <div id="payload-{{.ID}}"></div>
 
-{{define "artifact"}}
-<article class="artifact-card">
-  <div class="artifact-top">
-    <div>
-      <strong>{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</strong>
-
+  <details class="uvy-disclosure">
+    <summary>Technical details</summary>
+    <div class="uvy-disclosure__body">
+      <dl class="uvy-kv uvy-kv--tight">
+        <div><dt>Artifact digest</dt><dd><code>{{.Digest}}</code></dd></div>
+        <div><dt>Target digest</dt><dd><code>{{.TargetDigest}}</code></dd></div>
+        {{if .MediaType}}<div><dt>Media type</dt><dd><code>{{.MediaType}}</code></dd></div>{{end}}
+        {{if .ArtifactType}}<div><dt>Artifact type</dt><dd><code>{{.ArtifactType}}</code></dd></div>{{end}}
+        {{if .Size}}<div><dt>Size</dt><dd class="num">{{.Size}} bytes</dd></div>{{end}}
+        <div><dt>Discovery</dt><dd>{{.Discovery}}</dd></div>
+        {{range .Facts}}<div><dt>{{.Key}}</dt><dd>{{.Value}}</dd></div>{{end}}
+      </dl>
     </div>
-    <span class="chip {{if .Error}}warn{{else}}neutral{{end}}">{{.DecodeStatus}}</span>
-  </div>
-
-  <p class="verification-label">{{if .VerificationStatus}}{{.VerificationStatus}}{{else}}Not verified{{end}} · No policy trust evaluated</p>
-  {{if .OverviewFacts}}
-  <dl class="artifact-facts">
-    {{range .OverviewFacts}}<dt>{{.Key}}</dt><dd>{{if .Link}}<a class="fact-link" href="{{.Link}}">{{.Value}}</a>{{else}}{{.Value}}{{end}}</dd>{{end}}
-  </dl>
-  {{end}}
-
-  {{if .CertificateFacts}}<details class="technical-details"><summary>Published certificate identity</summary><dl class="compact-facts">{{range .CertificateFacts}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}</dl></details>{{end}}
-  {{if .Components}}
-  <div class="component-inventory"><div class="inventory-toolbar"><strong>Package inventory</strong><label>Filter packages <input type="search" class="component-filter" placeholder="Name, version, ecosystem…" aria-label="Filter packages"></label></div><p class="filter-count support-note" aria-live="polite">{{len .Components}} packages shown</p>
-  <div class="component-table-wrap">
-    {{if .ComponentsTruncated}}<p class="payload-note">Component inventory is limited to the first 200 entries.</p>{{end}}
-    <table class="component-table">
-      <thead><tr><th>Component</th><th>Version</th><th>Ecosystem</th><th>License</th></tr></thead>
-      <tbody>
-        {{range .Components}}
-        <tr>
-          <td title="{{.PURL}}">{{if .Name}}{{.Name}}{{else}}—{{end}}{{if and .Supplier (ne .Supplier "NOASSERTION")}}<small class="package-supplier">{{.Supplier}}</small>{{end}}</td>
-          <td>{{if .Version}}{{.Version}}{{else}}—{{end}}</td>
-          <td>{{if .Ecosystem}}{{.Ecosystem}}{{else}}—{{end}}</td>
-          <td>{{if and .License (ne .License "NOASSERTION")}}{{.License}}{{else}}—{{end}}</td>
-        </tr>
-        {{end}}
-      </tbody>
-    </table>
-  </div></div>
-  {{end}}
-
-  {{if .Error}}<p class="chip bad">{{.Error}}</p>{{end}}
-  <div class="artifact-actions">
-    {{if .Downloadable}}<a class="btn-secondary btn-inline" href="/artifacts/{{.ID}}/download">{{template "icon-download"}} Download raw artifact</a>{{end}}
-    <details class="technical-details inline-details">
-      <summary>Technical details</summary>
-      <dl class="compact-facts">
-        <dt>Artifact digest</dt><dd class="mono digest-value">{{.Digest}}</dd><dt>Target digest</dt><dd class="mono digest-value">{{.TargetDigest}}</dd>{{range .Facts}}<dt>{{.Key}}</dt><dd>{{.Value}}</dd>{{end}}<dt>Discovery</dt><dd>{{.Discovery}}</dd>
-        {{if .MediaType}}<dt>Media type</dt><dd>{{.MediaType}}</dd>{{end}}
-        {{if .ArtifactType}}<dt>Artifact type</dt><dd>{{.ArtifactType}}</dd>{{end}}
-        {{if .Size}}<dt>Size</dt><dd>{{.Size}} bytes</dd>{{end}}
-      </dl>
-    </details>
-  </div>
-
-  {{if .RawView}}<div class="payload-lazy"><a class="payload-load" href="/artifacts/{{.ID}}/view" hx-get="/artifacts/{{.ID}}/view" hx-target="closest .payload-lazy" hx-swap="innerHTML">Explore decoded structure &amp; raw payload →</a></div>{{end}}
+  </details>
 </article>
-{{end}}
-
-{{define "payloadRows"}}
-{{range .}}
-<tr class="{{if .DecodedRows}}payload-row-has-expansion{{end}}">
-  <td class="payload-key {{.DepthClass}}">{{.DisplayKey}}</td>
-  <td class="payload-value">{{if .DecodedRows}}<span class="payload-kind">{{.Type}}</span>{{else}}{{.Value}}{{end}}</td>
-</tr>
-{{if .DecodedRows}}
-<tr class="payload-expansion-row"><td colspan="2">{{template "nestedPayloadTabs" .}}</td></tr>
-{{end}}
-{{end}}
-{{end}}
-
-{{define "nestedPayloadTabs"}}
-<div class="payload-tabs nested-payload-tabs" data-artifact-tabs>
-  <div class="tab-list compact-tabs nested-tabs" role="tablist" aria-label="Decoded value views">
-    <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded</button>
-    <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw</button>
-  </div>
-  <div class="artifact-panel is-active" data-artifact-panel="decoded">
-    <div class="payload-table-wrap nested-payload-table-wrap">
-      <table class="payload-table nested-payload-table">
-        {{template "payloadColgroup"}}
-        <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
-      </table>
-    </div>
-  </div>
-  <div class="artifact-panel" data-artifact-panel="raw" hidden><pre class="payload-pre nested-payload-pre">{{.Raw}}</pre></div>
-</div>
-{{end}}
-
-{{define "payloadColgroup"}}
-<colgroup><col class="payload-col-key"><col class="payload-col-value"></colgroup>
-{{end}}
-
-{{define "payload-view"}}
-<details open class="payload-disclosure"><summary>Decoded structure &amp; raw payload</summary>
-  <div class="payload-tabs" data-artifact-tabs>
-    <div class="tab-list compact-tabs" role="tablist" aria-label="Artifact payload views">
-      <button type="button" class="tab-button is-active" data-artifact-tab="decoded" role="tab" aria-selected="true">Decoded structure</button>
-      <button type="button" class="tab-button" data-artifact-tab="raw" role="tab" aria-selected="false">Raw JSON</button>
-    </div>
-    <div class="artifact-panel is-active" data-artifact-panel="decoded">
-      {{if .DecodedRows}}
-        {{if .DecodedRowsTruncated}}<p class="payload-note">Decoded structure view is truncated.</p>{{end}}
-        <div class="payload-table-wrap">
-          <table class="payload-table">
-            {{template "payloadColgroup"}}
-            <thead><tr><th>Attribute</th><th>Value</th></tr></thead>
-            <tbody>{{template "payloadRows" .DecodedRows}}</tbody>
-          </table>
-        </div>
-      {{else}}
-        <div class="empty-state">This payload is not structured JSON.</div>
-      {{end}}
-    </div>
-    <div class="artifact-panel" data-artifact-panel="raw" hidden>
-      {{if .RawViewTruncated}}<p class="payload-note">Raw payload view is truncated.</p>{{end}}
-      <pre class="payload-pre">{{.RawView}}</pre>
-    </div>
-  </div>
-</details>
 {{end}}

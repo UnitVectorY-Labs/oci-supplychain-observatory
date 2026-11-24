@@ -24,6 +24,8 @@ const (
 )
 
 type Config struct {
+	Version          string
+	ShowVersion      bool
 	HTTPAddr         string
 	AllowedRegistry  map[string]bool
 	AllowedList      []string
@@ -69,6 +71,7 @@ func Load() (Config, error) {
 		allowedMap[strings.ToLower(host)] = true
 	}
 	return Config{
+		ShowVersion:      boolEnv("OSO_SHOW_VERSION", true),
 		HTTPAddr:         env("OSO_HTTP_ADDR", env("CTI_HTTP_ADDR", ":8080")),
 		AllowedRegistry:  allowedMap,
 		AllowedList:      list,
@@ -82,6 +85,21 @@ func Load() (Config, error) {
 		MaxReferrers:     intEnv("OSO_MAX_REFERRERS", DefaultMaxReferrers),
 		MaxLineageInputs: intEnv("OSO_MAX_LINEAGE_INPUTS", DefaultMaxLineageInputs),
 	}, nil
+}
+
+func boolEnv(k string, fallback bool) bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv(k)))
+	if v == "" {
+		return fallback
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
 
 func env(k, fallback string) string {

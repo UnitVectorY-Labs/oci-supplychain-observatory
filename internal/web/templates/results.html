@@ -1,12 +1,24 @@
-<div class="page-shell">
-  {{template "header"}}
-  <main class="result-main">
-    <details class="new-inspection"><summary>Inspect another image</summary>{{template "search-form" .SearchInput}}</details>
-    <section class="result-hero">
-      <p class="eyebrow">Image supply chain</p>
-      <h1>{{if .Loading}}{{.Loading.Input}}{{else if .Report}}{{.Report.DisplayReference}}{{else}}Unable to inspect image{{end}}</h1>
-    </section>
-    {{template "result-panel.html" .}}
-  </main>
-  {{template "footer"}}
-</div>
+{{template "header-page"}}
+<main class="page uvy-stack" id="main">
+  <nav class="uvy-breadcrumbs" aria-label="Breadcrumb">
+    <ol>
+      <li><a href="/">Inspect</a></li>
+      <li aria-current="page">{{if .SearchInput}}{{.SearchInput}}{{else}}Inspection results{{end}}</li>
+    </ol>
+  </nav>
+
+  <section class="uvy-panel" aria-label="Inspect another image">
+    {{template "search-form" .SearchInput}}
+  </section>
+
+  <div class="uvy-page-header">
+    <div>
+      <h1>{{if .Loading}}{{.Loading.Input}}{{else if .Report}}{{.Report.DisplayReference}}{{else}}Inspection error{{end}}</h1>
+      {{if .Loading}}<p class="uvy-lead">Resolving immutable digest and querying published supply chain metadata.</p>{{end}}
+    </div>
+    {{if .Report}}<span class="uvy-badge">{{.Report.TopLevel.Kind}}</span>{{end}}
+  </div>
+
+  {{template "result-panel.html" .}}
+</main>
+{{template "footer"}}

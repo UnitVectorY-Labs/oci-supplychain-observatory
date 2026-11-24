@@ -31,6 +31,7 @@ func main() {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
 	}
+	cfg.Version = Version
 	registry := oci.NewClient(cfg.RequestTimeout)
 	reportCache := cache.NewMemory[*inspect.Report]()
 	inspector := inspect.NewService(cfg, registry, reportCache, logger)
