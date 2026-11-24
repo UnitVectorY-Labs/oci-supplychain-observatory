@@ -73,10 +73,31 @@ func (s *Service) discoverLineage(ctx context.Context, imageRef reference.ImageR
 		}
 
 		if platform.Base == nil {
-			if declared, ok := s.declaredBase(*platform); ok {
+			declared, ok := s.declaredBase(*platform)
+			if !ok && platform != &report.TopLevel && len(platform.Layers) > 0 {
+				// Fall back to index-level base image annotations when platform manifest omits them.
+				declared, ok = s.declaredBaseFromAnnotations(report.TopLevel.Annotations, platform.Name)
+			}
+			if ok {
+				// If the declared base is inspectable and we have layers, check exact prefix too!
+				if declared.Inspectable && len(platform.Layers) > 0 {
+					if layers, matchOK := s.platformLayers(ctx, declared, *platform); matchOK && exactLayerPrefix(platform.Layers, layers) {
+						declared.SharedLayers = len(layers)
+						declared.BaseLayerCount = len(layers)
+						declared.AddedLayerCount = len(platform.Layers) - len(layers)
+						declared.Evidence = append(declared.Evidence, "Exact layer prefix")
+					}
+				}
 				platform.Base = &BaseRelationship{BuildInput: declared}
 				platform.BuildInputs = append(platform.BuildInputs, declared)
 				aggregateBuildInput(aggregated, declared)
+			}
+		}
+
+		// Mark layers inherited from the established runtime base so the layer stack view highlights them.
+		if platform.Base != nil && platform.Base.SharedLayers > 0 {
+			for i := 0; i < platform.Base.SharedLayers && i < len(platform.Layers); i++ {
+				platform.Layers[i].FromBase = true
 			}
 		}
 	}
@@ -87,7 +108,7 @@ func (s *Service) discoverLineage(ctx context.Context, imageRef reference.ImageR
 	}
 	sort.Slice(report.BuildInputs, func(i, j int) bool {
 		if report.BuildInputs[i].Role != report.BuildInputs[j].Role {
-			return report.BuildInputs[i].Role == "Build input"
+			return report.BuildInputs[i].Role == "Runtime base"
 		}
 		return report.BuildInputs[i].Reference < report.BuildInputs[j].Reference
 	})
@@ -248,6 +269,9 @@ func repositoryName(value string) (string, bool) {
 }
 
 func (s *Service) platformLayers(ctx context.Context, input BuildInput, target TargetResult) ([]LayerDescriptor, bool) {
+	if s.registry == nil {
+		return nil, false
+	}
 	_, manifest, err := s.registry.GetManifest(ctx, input.Registry, input.Repository, input.Digest)
 	if err != nil {
 		return nil, false
@@ -314,8 +338,12 @@ func exactLayerPrefix(target, base []LayerDescriptor) bool {
 }
 
 func (s *Service) declaredBase(platform TargetResult) (BuildInput, bool) {
-	name := platform.Annotations["org.opencontainers.image.base.name"]
-	digest := platform.Annotations["org.opencontainers.image.base.digest"]
+	return s.declaredBaseFromAnnotations(platform.Annotations, platform.Name)
+}
+
+func (s *Service) declaredBaseFromAnnotations(annotations map[string]string, platformName string) (BuildInput, bool) {
+	name := annotations["org.opencontainers.image.base.name"]
+	digest := annotations["org.opencontainers.image.base.digest"]
 	if name == "" {
 		return BuildInput{}, false
 	}
@@ -324,7 +352,7 @@ func (s *Service) declaredBase(platform TargetResult) (BuildInput, bool) {
 		Reference: name,
 		Digest:    digest,
 		Role:      "Runtime base",
-		Platforms: []string{platform.Name},
+		Platforms: []string{platformName},
 		Evidence:  []string{"OCI base image annotation"},
 	}
 	if err == nil && digest != "" {

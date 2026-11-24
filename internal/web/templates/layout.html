@@ -1,0 +1,78 @@
+{{define "head-assets"}}
+  <link rel="icon" type="image/svg+xml" href="{{assetURL "/static/img/uvy-standalone-mark-light.svg"}}" media="(prefers-color-scheme: light)">
+  <link rel="icon" type="image/svg+xml" href="{{assetURL "/static/img/uvy-standalone-mark-dark.svg"}}" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="{{assetURL "/static/css/uvy.css"}}">
+  <link rel="stylesheet" href="{{assetURL "/static/css/app.css"}}">
+  <script src="{{assetURL "/static/js/uvy.js"}}"></script>
+  <meta name="htmx-config" content='{"includeIndicatorCSS": false}'>
+  <script src="https://unpkg.com/htmx.org@4.0.0/dist/htmx.min.js" integrity="sha384-BvJpBiO8Kh31EqtJe5DRIeWrHWnCGkwytKs9NKFi86Hhw96dEqdEMzZDeK9iEGTc" crossorigin="anonymous" defer></script>
+  <script src="{{assetURL "/static/js/app.js"}}" defer></script>
+{{end}}
+
+{{define "uvy-mark"}}<svg class="uvy-mark" aria-hidden="true" width="28" height="28" viewBox="0 0 100 100"><g stroke-width="4" stroke-linejoin="round"><polygon class="uvy-mark__top" points="50,8 82.5,26.75 50,45.5 17.5,26.75"/><polygon class="uvy-mark__left" points="12.3,35.75 44.8,54.5 44.8,92 12.3,73.25"/><polygon class="uvy-mark__right" points="55.2,54.5 87.7,35.75 87.7,73.25 55.2,92"/></g></svg>{{end}}
+
+{{define "theme-button"}}<button id="theme" class="icon-button" type="button" aria-label="Switch color theme" hidden><svg class="icon" aria-hidden="true" data-icon="moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-moon"></use></svg><svg class="icon" aria-hidden="true" data-icon="sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-sun"></use></svg></button>{{end}}
+
+{{define "header-home"}}
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    {{template "icons-sprite"}}
+    <div class="header-identity">
+      <h1><a class="brand" href="/">{{template "uvy-mark"}}<span>OCI Supply Chain Observatory</span></a></h1>
+    </div>
+    <nav aria-label="Main navigation">
+      <a href="/" aria-current="page">Inspect</a>
+    </nav>
+    {{template "theme-button"}}
+  </div>
+</header>
+{{end}}
+
+{{define "header-page"}}
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="header-inner">
+    {{template "icons-sprite"}}
+    <div class="header-identity">
+      <a class="brand" href="/">{{template "uvy-mark"}}<span>OCI Supply Chain Observatory</span></a>
+    </div>
+    <nav aria-label="Main navigation">
+      <a href="/">Inspect</a>
+    </nav>
+    {{template "theme-button"}}
+  </div>
+</header>
+{{end}}
+
+{{define "footer"}}
+<footer class="site-footer">
+  <div class="footer-inner">
+    <p>
+      <a href="https://github.com/UnitVectorY-Labs">UnitVectorY-Labs</a>
+      <span class="footer-sep" aria-hidden="true">|</span>
+      <a href="https://github.com/UnitVectorY-Labs/oci-supplychain-observatory/blob/main/LICENSE">MIT License</a>
+      <span class="footer-sep" aria-hidden="true">|</span>
+      <a href="https://github.com/UnitVectorY-Labs/oci-supplychain-observatory"><strong>oci-supplychain-observatory</strong></a> on GitHub
+    </p>
+    {{if showVersion}}<p class="version">Version {{version}}</p>{{end}}
+  </div>
+</footer>
+{{end}}
+
+{{define "search-form"}}
+<form method="get" action="/inspect" class="inspect-form">
+  <div class="uvy-field">
+    <label for="image-reference">Container image reference</label>
+    <input id="image-reference" class="uvy-input--mono" type="text" name="image" value="{{.}}" placeholder="registry/repository:tag or registry/repository@sha256:..." maxlength="512" required autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" aria-describedby="registry-help">
+  </div>
+  <button type="submit" class="uvy-button--primary">
+    <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-search"></use></svg>
+    Inspect image
+  </button>
+</form>
+<div id="registry-help" class="registry-row">
+  <span class="uvy-label">Allowed registries</span>
+  {{range registries}}<button type="button" class="uvy-button--small" data-registry="{{.}}" disabled data-enable-with-js>{{.}}</button>{{end}}
+</div>
+{{end}}

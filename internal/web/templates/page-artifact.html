@@ -1,5 +1,55 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Artifact payload · Supply Chain Observatory</title><link rel="stylesheet" href="{{assetURL "/static/css/style.css"}}">{{template "head-scripts" .}}</head>
-<body><div class="page-shell">{{template "header"}}<main class="result-main"><h1>{{.Purpose}}</h1><p class="support-note">Decoded metadata. Not cryptographically verified.</p>{{template "payload-view" .}}</main>{{template "footer"}}</div></body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}} — OCI Supply Chain Observatory — UnitVectorY-Labs</title>
+  {{template "head-assets" .}}
+</head>
+<body>
+  {{template "header-page"}}
+  <main class="page uvy-stack" id="main">
+    <nav class="uvy-breadcrumbs" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="/">Inspect</a></li>
+        <li aria-current="page">{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</li>
+      </ol>
+    </nav>
+
+    <div class="uvy-page-header">
+      <div>
+        <h1>{{if .Purpose}}{{.Purpose}}{{else}}{{.Type}}{{end}}</h1>
+        <p class="uvy-lead">Decoded registry artifact metadata. No trust policy evaluated.</p>
+      </div>
+      {{if .Downloadable}}
+      <a class="uvy-button" href="/artifacts/{{.ID}}/download">
+        <svg class="icon icon-small" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#tabler-download"></use></svg>
+        Download raw ({{bytes .Size}})
+      </a>
+      {{end}}
+    </div>
+
+    <section class="uvy-panel" aria-labelledby="artifact-meta-title">
+      <div class="uvy-panel__header">
+        <h2 id="artifact-meta-title">Artifact descriptor</h2>
+        <span class="uvy-badge">{{.DecodeStatus}}</span>
+      </div>
+      <dl class="uvy-kv uvy-kv--tight">
+        {{if .Digest}}<div><dt>Artifact digest</dt><dd><code>{{.Digest}}</code></dd></div>{{end}}
+        {{if .TargetDigest}}<div><dt>Target digest</dt><dd><code>{{.TargetDigest}}</code></dd></div>{{end}}
+        {{if .MediaType}}<div><dt>Media type</dt><dd><code>{{.MediaType}}</code></dd></div>{{end}}
+        {{if .Discovery}}<div><dt>Discovery</dt><dd>{{.Discovery}}</dd></div>{{end}}
+        {{if .Size}}<div><dt>Size</dt><dd class="num">{{bytes .Size}}</dd></div>{{end}}
+      </dl>
+    </section>
+
+    <section class="uvy-panel" aria-labelledby="artifact-payload-title">
+      <div class="uvy-panel__header">
+        <h2 id="artifact-payload-title">Payload inspection</h2>
+      </div>
+      {{template "payload-view" .}}
+    </section>
+  </main>
+  {{template "footer"}}
+</body>
 </html>
